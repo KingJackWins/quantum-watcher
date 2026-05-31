@@ -269,13 +269,11 @@ private struct Header: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 VStack(alignment: .leading, spacing: 1) {
-                    (
-                        Text("Code").foregroundStyle(.primary)
-                        + Text("Burn").foregroundStyle(Theme.brandForest)
-                    )
-                    .font(.system(size: 13, weight: .semibold))
-                    .tracking(-0.15)
-                    Text("AI Coding Cost Tracker")
+                    Text("Quantum Watcher")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .tracking(-0.15)
+                    Text("AI Token Monitor")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }
@@ -428,7 +426,7 @@ private struct UpdateBadge: View {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.system(size: 10))
                 }
-                Text(updateChecker.isUpdating ? "Updating..." : (updateChecker.updateError == nil ? "Update" : "Failed"))
+                Text(updateChecker.isUpdating ? "Updating..." : (updateChecker.updateError == nil ? "Update" : "Retry"))
                     .font(.system(size: 10, weight: .medium))
             }
             .padding(.horizontal, 8)

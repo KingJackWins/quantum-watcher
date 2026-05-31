@@ -392,7 +392,7 @@ private struct AboutSettingsTab: View {
                 .foregroundStyle(Theme.brandAccent)
             Text("Quantum Watcher")
                 .font(.system(size: 18, weight: .semibold))
-            Text("AI Coding Cost Tracker")
+            Text("AI Token Monitor")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             Text("Version \(appVersion) (\(buildVersion))")
