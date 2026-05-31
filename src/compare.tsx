@@ -9,7 +9,7 @@ import { getAllProviders } from './providers/index.js'
 import type { ProjectSummary, DateRange } from './types.js'
 import { patchStdoutForWindows } from './ink-win.js'
 
-const ORANGE = '#FF8C42'
+const ORANGE = '#0f6b35'
 const GREEN = '#5BF5A0'
 const DIM = '#888888'
 const GOLD = '#FFD700'

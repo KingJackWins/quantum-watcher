@@ -15,7 +15,7 @@ import { formatTokens } from './format.js'
 // Display constants
 // ============================================================================
 
-const ORANGE = '#FF8C42'
+const ORANGE = '#0f6b35'
 const DIM = '#666666'
 const GOLD = '#FFD700'
 const CYAN = '#5BF5E0'

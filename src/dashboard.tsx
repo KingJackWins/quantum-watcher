@@ -20,7 +20,7 @@ import { patchStdoutForWindows } from './ink-win.js'
 type View = 'dashboard' | 'optimize' | 'compare'
 
 const MIN_WIDE = 90
-const ORANGE = '#0f6b35'
+const ORANGE = '#0a4a25'
 const DIM = '#555555'
 const GOLD = '#4ADE80'
 const PLAN_BAR_WIDTH = 10
@@ -37,7 +37,7 @@ const LANG_DISPLAY_NAMES: Record<string, string> = {
 }
 
 const PANEL_COLORS = {
-  overview: '#0f6b35',
+  overview: '#0a4a25',
   daily: '#5B9EF5',
   project: '#5BF5A0',
   model: '#E05BF5',
@@ -49,14 +49,14 @@ const PANEL_COLORS = {
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
-  claude: '#0f6b35',
+  claude: '#0a4a25',
   codex: '#5BF5A0',
   cursor: '#00B4D8',
   'ibm-bob': '#0F62FE',
   opencode: '#A78BFA',
   pi: '#F472B6',
   kimi: '#B6E34A',
-  all: '#0f6b35',
+  all: '#0a4a25',
 }
 
 const CATEGORY_COLORS: Record<TaskCategory, string> = {
@@ -86,16 +86,17 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 function gradientColor(pct: number): string {
+  // 0% → dark forest (#0a4023), 33% → mid green (#0a4a25), 66% → bright green (#4ADE80), 100% → light mint (#86EFAC)
   if (pct <= 0.33) {
     const t = pct / 0.33
-    return toHex(lerp(91, 245, t), lerp(158, 200, t), lerp(245, 91, t))
+    return toHex(lerp(0x0a, 0x0a, t), lerp(0x40, 0x4a, t), lerp(0x23, 0x25, t))
   }
   if (pct <= 0.66) {
     const t = (pct - 0.33) / 0.33
-    return toHex(lerp(245, 255, t), lerp(200, 140, t), lerp(91, 66, t))
+    return toHex(lerp(0x0a, 0x4a, t), lerp(0x4a, 0xde, t), lerp(0x25, 0x80, t))
   }
   const t = (pct - 0.66) / 0.34
-  return toHex(lerp(255, 245, t), lerp(140, 91, t), lerp(66, 91, t))
+  return toHex(lerp(0x4a, 0x86, t), lerp(0xde, 0xef, t), lerp(0x80, 0xac, t))
 }
 
 function getPeriodRange(period: Period): { start: Date; end: Date } {
