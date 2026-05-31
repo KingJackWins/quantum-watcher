@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a universal CodeBurnMenubar.app bundle from the SwiftPM target and drops a
+# Builds a universal QuantumWatcherMenubar.app bundle from the SwiftPM target and drops a
 # distributable zip alongside. Used by the GitHub release workflow; also runnable locally.
 #
 # Usage:
@@ -11,9 +11,9 @@ set -euo pipefail
 VERSION="${1:-dev}"
 ASSET_VERSION="${VERSION#mac-}"
 BUNDLE_VERSION="${ASSET_VERSION#v}"
-BUNDLE_NAME="CodeBurnMenubar.app"
-BUNDLE_ID="org.agentseal.codeburn-menubar"
-EXECUTABLE_NAME="CodeBurnMenubar"
+BUNDLE_NAME="QuantumWatcherMenubar.app"
+BUNDLE_ID="com.quantummemory.quantum-watcher-menubar"
+EXECUTABLE_NAME="QuantumWatcherMenubar"
 MIN_MACOS="14.0"
 
 repo_root() {
@@ -54,7 +54,7 @@ cat > "${BUNDLE}/Contents/Info.plist" <<PLIST
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>CodeBurn Menubar</string>
+    <string>Quantum Watcher Menubar</string>
     <key>CFBundleExecutable</key>
     <string>${EXECUTABLE_NAME}</string>
     <key>CFBundleIconFile</key>
@@ -78,7 +78,7 @@ cat > "${BUNDLE}/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
-    <string>© AgentSeal</string>
+    <string>© Quantum Memory</string>
 </dict>
 </plist>
 PLIST
@@ -94,7 +94,7 @@ echo "▸ Ad-hoc signing..."
 codesign --force --sign - --timestamp=none --deep "${BUNDLE}"
 codesign --verify --deep --strict "${BUNDLE}"
 
-ZIP_NAME="CodeBurnMenubar-${ASSET_VERSION}.zip"
+ZIP_NAME="QuantumWatcherMenubar-${ASSET_VERSION}.zip"
 ZIP_PATH="${DIST_DIR}/${ZIP_NAME}"
 echo "▸ Packaging ${ZIP_NAME}..."
 (cd "${DIST_DIR}" && COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --norsrc --keepParent "${BUNDLE_NAME}" "${ZIP_NAME}")

@@ -2,25 +2,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "CodeBurnMenubar",
+    name: "QuantumWatcherMenubar",
     platforms: [
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "CodeBurnMenubar", targets: ["CodeBurnMenubar"])
+        .executable(name: "QuantumWatcherMenubar", targets: ["QuantumWatcherMenubar"])
     ],
     targets: [
         .executableTarget(
-            name: "CodeBurnMenubar",
-            path: "Sources/CodeBurnMenubar",
+            name: "QuantumWatcherMenubar",
+            path: "Sources/QuantumWatcherMenubar",
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
         .testTarget(
-            name: "CodeBurnMenubarTests",
-            dependencies: ["CodeBurnMenubar"],
-            path: "Tests/CodeBurnMenubarTests"
+            name: "QuantumWatcherMenubarTests",
+            dependencies: ["QuantumWatcherMenubar"],
+            path: "Tests/QuantumWatcherMenubarTests"
         )
     ]
 )
