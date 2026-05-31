@@ -19,7 +19,7 @@ export type PlanConfig = Omit<Plan, 'provider' | 'setAt'> & Partial<Pick<Plan, '
 export type PlanConfigMap = Partial<Record<PlanProvider, PlanConfig>>
 export type PlanMap = Partial<Record<PlanProvider, Plan>>
 
-export type CodeburnConfig = {
+export type QuantumWatcherConfig = {
   currency?: {
     code: string
     symbol?: string
@@ -30,23 +30,32 @@ export type CodeburnConfig = {
 }
 
 function getConfigDir(): string {
-  return join(homedir(), '.config', 'codeburn')
+  return join(homedir(), '.config', 'quantum-watcher')
 }
 
 function getConfigPath(): string {
   return join(getConfigDir(), 'config.json')
 }
 
-export async function readConfig(): Promise<CodeburnConfig> {
+export async function readConfig(): Promise<QuantumWatcherConfig> {
   try {
     const raw = await readFile(getConfigPath(), 'utf-8')
-    return JSON.parse(raw) as CodeburnConfig
+    return JSON.parse(raw) as QuantumWatcherConfig
   } catch {
+    // Migration fallback: try legacy config paths
+    for (const legacy of ['codeburn', 'exe-watcher']) {
+      try {
+        const raw = await readFile(join(homedir(), '.config', legacy, 'config.json'), 'utf-8')
+        return JSON.parse(raw) as QuantumWatcherConfig
+      } catch {
+        continue
+      }
+    }
     return {}
   }
 }
 
-export async function saveConfig(config: CodeburnConfig): Promise<void> {
+export async function saveConfig(config: QuantumWatcherConfig): Promise<void> {
   await mkdir(getConfigDir(), { recursive: true })
   const configPath = getConfigPath()
   // Randomize the temp path so two simultaneous saveConfig calls (from
@@ -76,7 +85,7 @@ function planFromConfig(provider: PlanProvider, plan: PlanConfig | undefined): P
   }
 }
 
-function normalizePlans(config: CodeburnConfig): PlanMap {
+function normalizePlans(config: QuantumWatcherConfig): PlanMap {
   const plans: PlanMap = {}
 
   if (config.plans && Object.keys(config.plans).length > 0) {

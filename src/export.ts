@@ -245,7 +245,7 @@ function buildReadme(periods: PeriodExport[]): string {
   const { code } = getCurrency()
   const generated = new Date().toISOString()
   const lines = [
-    'CodeBurn Usage Export',
+    'Quantum Watcher Usage Export',
     '====================',
     '',
     `Generated: ${generated}`,
@@ -273,15 +273,18 @@ function buildReadme(periods: PeriodExport[]): string {
 }
 
 /// Sentinel file dropped into every folder we create so we can safely overwrite an older
-/// codeburn export without ever deleting a user's unrelated files by accident.
-const EXPORT_MARKER_FILE = '.codeburn-export'
+/// quantum-watcher export without ever deleting a user's unrelated files by accident.
+const EXPORT_MARKER_FILE = '.quantum-watcher-export'
 
 async function isCodeburnExportFolder(path: string): Promise<boolean> {
+  // Check new marker first, then legacy .codeburn-export for backward compat
   const markerStat = await stat(join(path, EXPORT_MARKER_FILE)).catch(() => null)
-  return markerStat?.isFile() ?? false
+  if (markerStat?.isFile()) return true
+  const legacyStat = await stat(join(path, '.codeburn-export')).catch(() => null)
+  return legacyStat?.isFile() ?? false
 }
 
-async function clearCodeburnExportFolder(path: string): Promise<void> {
+async function clearQuantumWatcherExportFolder(path: string): Promise<void> {
   const entries = await readdir(path)
   for (const entry of entries) {
     await rm(join(path, entry), { recursive: true, force: true })
@@ -290,7 +293,7 @@ async function clearCodeburnExportFolder(path: string): Promise<void> {
 
 /// Writes a folder of one-table-per-file CSVs. The outputPath is treated as a directory. If it
 /// ends in `.csv` the extension is stripped to form the folder name. Refuses to delete a
-/// pre-existing file or a non-codeburn folder, so a typo like `-o ~/.ssh/id_ed25519` can't
+/// pre-existing file or a non-quantum-watcher folder, so a typo like `-o ~/.ssh/id_ed25519` can't
 /// wipe a sensitive file (prior versions did `rm(path, { force: true })` unconditionally).
 export async function exportCsv(periods: PeriodExport[], outputPath: string): Promise<string> {
   const thirtyDays = periods.find(p => p.label === '30 Days')
@@ -312,7 +315,7 @@ export async function exportCsv(periods: PeriodExport[], outputPath: string): Pr
         `Delete it manually or pick a different -o path.`
       )
     }
-    await clearCodeburnExportFolder(folder)
+    await clearQuantumWatcherExportFolder(folder)
   }
   await mkdir(folder, { recursive: true })
   await writeFile(join(folder, EXPORT_MARKER_FILE), '', 'utf-8')
@@ -340,7 +343,7 @@ export async function exportJson(periods: PeriodExport[], outputPath: string): P
   const { code, rate, symbol } = getCurrency()
 
   const data = {
-    schema: 'codeburn.export.v2',
+    schema: 'quantum-watcher.export.v2',
     generated: new Date().toISOString(),
     currency: { code, rate, symbol },
     summary: buildSummaryRows(periods),
@@ -357,8 +360,8 @@ export async function exportJson(periods: PeriodExport[], outputPath: string): P
   }
 
   const target = resolve(outputPath.toLowerCase().endsWith('.json') ? outputPath : `${outputPath}.json`)
-  // Refuse to overwrite an existing file that wasn't produced by codeburn
-  // export. CSV path has the same guard via the .codeburn-export marker; JSON
+  // Refuse to overwrite an existing file that wasn't produced by quantum-watcher
+  // export. CSV path has the same guard via the export marker; JSON
   // was missing it, so a stray `-o ~/important.json` would silently clobber.
   const existing = await stat(target).catch(() => null)
   if (existing?.isFile()) {
@@ -371,9 +374,9 @@ export async function exportJson(periods: PeriodExport[], outputPath: string): P
       const buf = Buffer.alloc(4096)
       const { bytesRead } = await fh.read(buf, 0, buf.length, 0)
       const head = buf.toString('utf-8', 0, bytesRead)
-      if (!head.includes('"schema": "codeburn.export.v')) {
+      if (!head.includes('"schema": "codeburn.export.v') && !head.includes('"schema": "quantum-watcher.export.v')) {
         throw new Error(
-          `Refusing to overwrite ${target}: file does not look like a codeburn export. ` +
+          `Refusing to overwrite ${target}: file does not look like a quantum-watcher export. ` +
           `Delete it manually or pick a different -o path.`
         )
       }

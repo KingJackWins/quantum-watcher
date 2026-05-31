@@ -216,7 +216,7 @@ export const claude: Provider = {
     const explicitMulti = process.env['CLAUDE_CONFIG_DIRS']
     if (!anyDirReadable && explicitMulti !== undefined && explicitMulti !== '' && configDirs.length > 0) {
       process.stderr.write(
-        `codeburn: CLAUDE_CONFIG_DIRS was set but no listed directory could be read. ` +
+        `quantum-watcher: CLAUDE_CONFIG_DIRS was set but no listed directory could be read. ` +
         `Tried: ${configDirs.join(', ')}. ` +
         `Use "${pathDelimiter}" as the separator on this platform.\n`,
       )

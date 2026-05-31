@@ -42,7 +42,7 @@ export type DailyCache = {
 }
 
 function getCacheDir(): string {
-  return process.env['CODEBURN_CACHE_DIR'] ?? join(homedir(), '.cache', 'codeburn')
+  return process.env['QUANTUM_WATCHER_CACHE_DIR'] ?? process.env['CODEBURN_CACHE_DIR'] ?? join(homedir(), '.cache', 'quantum-watcher')
 }
 
 function getCachePath(): string {

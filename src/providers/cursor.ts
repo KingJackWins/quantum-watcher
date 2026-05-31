@@ -420,7 +420,7 @@ function parseBubbles(db: SqliteDatabase, seenKeys: Set<string>): { calls: Parse
       )
       rowIdCutoff = cutoffRows[0]?.rid ?? 0
       process.stderr.write(
-        `codeburn: Cursor database has ${total.toLocaleString()} bubbles, ` +
+        `quantum-watcher: Cursor database has ${total.toLocaleString()} bubbles, ` +
         `scanning the most recent ${MAX_BUBBLES.toLocaleString()}. ` +
         `Older sessions may be missing from this report.\n`
       )
@@ -524,7 +524,7 @@ function parseBubbles(db: SqliteDatabase, seenKeys: Set<string>): { calls: Parse
   }
 
   if (skipped > 0) {
-    process.stderr.write(`codeburn: skipped ${skipped} unreadable Cursor entries\n`)
+    process.stderr.write(`quantum-watcher: skipped ${skipped} unreadable Cursor entries\n`)
   }
 
   return { calls: results }
@@ -553,7 +553,7 @@ function parseAgentKv(db: SqliteDatabase, seenKeys: Set<string>, dbPath: string)
   // Cursor's agentKv schema does not record per-message timestamps. Use the
   // SQLite file's mtime as a bounded "last write" timestamp for all calls;
   // it's at least honest (no future time, no always-now). Users running
-  // codeburn against an idle Cursor install will see agentKv calls land at
+  // quantum-watcher against an idle Cursor install will see agentKv calls land at
   // the actual last activity time rather than today's date.
   let agentKvTimestamp: string
   try {
@@ -707,12 +707,12 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         try {
           db = openDatabase(dbPath)
         } catch (err) {
-          process.stderr.write(`codeburn: cannot open Cursor database: ${err instanceof Error ? err.message : err}\n`)
+          process.stderr.write(`quantum-watcher: cannot open Cursor database: ${err instanceof Error ? err.message : err}\n`)
           return
         }
         try {
           if (!validateSchema(db)) {
-            process.stderr.write('codeburn: Cursor storage format not recognized. You may need to update CodeBurn.\n')
+            process.stderr.write('quantum-watcher: Cursor storage format not recognized. You may need to update Quantum Watcher.\n')
             return
           }
           // Use a fresh local Set for intra-parse dedup so the global

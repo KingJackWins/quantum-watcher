@@ -332,7 +332,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       try {
         db = openDatabase(dbPath)
       } catch (err) {
-        process.stderr.write(`codeburn: cannot open Warp database: ${err instanceof Error ? err.message : err}\n`)
+        process.stderr.write(`quantum-watcher: cannot open Warp database: ${err instanceof Error ? err.message : err}\n`)
         return
       }
 

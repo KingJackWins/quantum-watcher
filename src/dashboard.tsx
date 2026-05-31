@@ -20,9 +20,9 @@ import { patchStdoutForWindows } from './ink-win.js'
 type View = 'dashboard' | 'optimize' | 'compare'
 
 const MIN_WIDE = 90
-const ORANGE = '#FF8C42'
+const ORANGE = '#0f6b35'
 const DIM = '#555555'
-const GOLD = '#FFD700'
+const GOLD = '#4ADE80'
 const PLAN_BAR_WIDTH = 10
 const HEAVY_PERIODS = new Set<Period>(['30days', 'month', 'all'])
 
@@ -37,26 +37,26 @@ const LANG_DISPLAY_NAMES: Record<string, string> = {
 }
 
 const PANEL_COLORS = {
-  overview: '#FF8C42',
+  overview: '#0f6b35',
   daily: '#5B9EF5',
   project: '#5BF5A0',
   model: '#E05BF5',
-  activity: '#F5C85B',
+  activity: '#86EFAC',
   tools: '#5BF5E0',
   mcp: '#F55BE0',
-  bash: '#F5A05B',
+  bash: '#34D399',
   skills: '#7B68EE',
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
-  claude: '#FF8C42',
+  claude: '#0f6b35',
   codex: '#5BF5A0',
   cursor: '#00B4D8',
   'ibm-bob': '#0F62FE',
   opencode: '#A78BFA',
   pi: '#F472B6',
   kimi: '#B6E34A',
-  all: '#FF8C42',
+  all: '#0f6b35',
 }
 
 const CATEGORY_COLORS: Record<TaskCategory, string> = {
@@ -67,7 +67,7 @@ const CATEGORY_COLORS: Record<TaskCategory, string> = {
   testing: '#E05BF5',
   exploration: '#5BF5E0',
   planning: '#7B9EF5',
-  delegation: '#F5C85B',
+  delegation: '#86EFAC',
   git: '#CCCCCC',
   'build/deploy': '#5BF5A0',
   conversation: '#888888',
@@ -207,7 +207,7 @@ function Overview({ projects, label, width, planUsages }: { projects: ProjectSum
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={PANEL_COLORS.overview} paddingX={1} width={width}>
       <Text wrap="truncate-end">
-        <Text bold color={ORANGE}>CodeBurn</Text>
+        <Text bold color={ORANGE}>Quantum Watcher</Text>
         <Text dimColor>  {label}</Text>
       </Text>
       <Text wrap="truncate-end">
@@ -636,7 +636,7 @@ function OptimizeView({ findings, costRate, projects, label, width, healthScore,
     <Box flexDirection="column" width={width}>
       <Box flexDirection="column" borderStyle="round" borderColor={ORANGE} paddingX={1} width={width}>
         <Text wrap="truncate-end">
-          <Text bold color={ORANGE}>CodeBurn Optimize</Text>
+          <Text bold color={ORANGE}>Quantum Optimize</Text>
           <Text dimColor>  {label}   Setup: </Text>
           <Text bold color={gradeColor}>{healthGrade}</Text>
           <Text dimColor> ({healthScore}/100)</Text>
@@ -700,7 +700,7 @@ function DashboardContent({ projects, period, columns, activeProvider, budgets, 
   const { dashWidth, wide, halfWidth, barWidth } = getLayout(columns)
   const isCursor = activeProvider === 'cursor'
   const activeLabel = label ?? PERIOD_LABELS[period]
-  if (projects.length === 0) return <Panel title="CodeBurn" color={ORANGE} width={dashWidth}><Text dimColor>No usage data found for {activeLabel}.</Text></Panel>
+  if (projects.length === 0) return <Panel title="Quantum Watcher" color={ORANGE} width={dashWidth}><Text dimColor>No usage data found for {activeLabel}.</Text></Panel>
   const pw = wide ? halfWidth : dashWidth
   const days = dayMode ? 1 : period === 'all' ? undefined : (period === 'month' || period === '30days' ? 31 : 14)
   return (
@@ -988,8 +988,8 @@ function InteractiveDashboard({ initialProjects, initialPeriod, initialProvider,
               </Box>
             </Box>
           : view === 'optimize'
-            ? <Panel title="CodeBurn Optimize" color={ORANGE} width={dashWidth}><Text dimColor>Scanning {headerLabel}...</Text></Panel>
-            : <Panel title="CodeBurn" color={ORANGE} width={dashWidth}><Text dimColor>Loading {headerLabel}...</Text></Panel>}
+            ? <Panel title="Quantum Optimize" color={ORANGE} width={dashWidth}><Text dimColor>Scanning {headerLabel}...</Text></Panel>
+            : <Panel title="Quantum Watcher" color={ORANGE} width={dashWidth}><Text dimColor>Loading {headerLabel}...</Text></Panel>}
         {view !== 'compare' && <StatusBar width={dashWidth} showProvider={multipleProviders} view={view} findingCount={0} optimizeAvailable={false} compareAvailable={false} customRange={isCustomRange} dayMode={isDayMode} />}
       </Box>
     )

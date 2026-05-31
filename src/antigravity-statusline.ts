@@ -22,7 +22,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isCodeBurnHook(command: unknown): boolean {
+function isQuantumWatcherHook(command: unknown): boolean {
   return typeof command === 'string' && command.includes('agy-statusline-hook')
 }
 
@@ -32,22 +32,22 @@ function shellQuote(value: string): string {
 }
 
 function hookCommand(): string {
-  const script = process.argv[1] || 'codeburn'
-  if (script === 'codeburn') return 'codeburn agy-statusline-hook'
+  const script = process.argv[1] || 'quantum-watcher'
+  if (script === 'quantum-watcher') return 'quantum-watcher agy-statusline-hook'
   return `${shellQuote(process.execPath)} ${shellQuote(script)} agy-statusline-hook`
 }
 
 function settingsPath(): string {
-  return process.env['CODEBURN_ANTIGRAVITY_SETTINGS_PATH']
+  return process.env['QUANTUM_WATCHER_ANTIGRAVITY_SETTINGS_PATH'] ?? process.env['CODEBURN_ANTIGRAVITY_SETTINGS_PATH']
     ?? join(homedir(), '.gemini', 'antigravity-cli', 'settings.json')
 }
 
-function codeburnCacheDir(): string {
-  return process.env['CODEBURN_CACHE_DIR'] ?? join(homedir(), '.cache', 'codeburn')
+function quantumWatcherCacheDir(): string {
+  return process.env['QUANTUM_WATCHER_CACHE_DIR'] ?? process.env['CODEBURN_CACHE_DIR'] ?? join(homedir(), '.cache', 'quantum-watcher')
 }
 
 function previousStatusLinePath(): string {
-  return join(codeburnCacheDir(), 'antigravity-statusline-previous.json')
+  return join(quantumWatcherCacheDir(), 'antigravity-statusline-previous.json')
 }
 
 async function readSettings(): Promise<Settings> {
@@ -109,14 +109,14 @@ async function clearPreviousStatusLine(): Promise<void> {
 export async function installAntigravityStatusLineHook(force = false): Promise<'installed' | 'already-installed'> {
   const settings = await readSettings()
   const existing = settings.statusLine
-  if (existing && !isCodeBurnHook(existing.command) && !force) {
+  if (existing && !isQuantumWatcherHook(existing.command) && !force) {
     throw new Error(
       'Antigravity CLI already has a custom statusLine command. Re-run with --force to replace it.'
     )
   }
 
-  if (isCodeBurnHook(existing?.command)) return 'already-installed'
-  if (existing && !isCodeBurnHook(existing.command)) await savePreviousStatusLine(existing)
+  if (isQuantumWatcherHook(existing?.command)) return 'already-installed'
+  if (existing && !isQuantumWatcherHook(existing.command)) await savePreviousStatusLine(existing)
 
   settings.statusLine = {
     type: 'command',
@@ -129,7 +129,7 @@ export async function installAntigravityStatusLineHook(force = false): Promise<'
 
 export async function uninstallAntigravityStatusLineHook(): Promise<'removed' | 'restored' | 'not-installed'> {
   const settings = await readSettings()
-  if (!isCodeBurnHook(settings.statusLine?.command)) return 'not-installed'
+  if (!isQuantumWatcherHook(settings.statusLine?.command)) return 'not-installed'
 
   const previous = await readPreviousStatusLine()
   if (previous) settings.statusLine = previous

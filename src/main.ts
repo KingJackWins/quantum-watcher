@@ -129,7 +129,7 @@ function sortedPlans(plans: Partial<Record<PlanProvider, Plan>>): Plan[] {
 function assertFormat(value: string, allowed: readonly string[], command: string): void {
   if (!allowed.includes(value)) {
     process.stderr.write(
-      `codeburn ${command}: unknown format "${value}". Valid values: ${allowed.join(', ')}.\n`
+      `quantum-watcher ${command}: unknown format "${value}". Valid values: ${allowed.join(', ')}.\n`
     )
     process.exit(1)
   }
@@ -144,14 +144,14 @@ async function runJsonReport(period: Period, provider: string, project: string[]
 }
 
 const program = new Command()
-  .name('codeburn')
+  .name('quantum-watcher')
   .description('See where your AI coding tokens go - by task, tool, model, and project')
   .version(version)
   .option('--verbose', 'print warnings to stderr on read failures and skipped files')
   .option('--timezone <zone>', 'IANA timezone for date grouping (e.g. Asia/Tokyo, America/New_York)')
 
 program.hook('preAction', async (thisCommand) => {
-  const tz = thisCommand.opts<{ timezone?: string }>().timezone ?? process.env['CODEBURN_TZ']
+  const tz = thisCommand.opts<{ timezone?: string }>().timezone ?? process.env['QUANTUM_WATCHER_TZ'] ?? process.env['CODEBURN_TZ']
   if (tz) {
     try {
       Intl.DateTimeFormat(undefined, { timeZone: tz })
@@ -165,6 +165,7 @@ program.hook('preAction', async (thisCommand) => {
   setModelAliases(config.modelAliases ?? {})
   if (thisCommand.opts<{ verbose?: boolean }>().verbose) {
     process.env['CODEBURN_VERBOSE'] = '1'
+    process.env['QUANTUM_WATCHER_VERBOSE'] = '1'
   }
   await loadCurrency()
 })
@@ -865,7 +866,7 @@ program
       return
     }
 
-    const defaultName = `codeburn-${toDateString(new Date())}`
+    const defaultName = `quantum-watcher-${toDateString(new Date())}`
     const outputPath = opts.output ?? `${defaultName}.${opts.format}`
 
     let savedPath: string
@@ -876,7 +877,7 @@ program
         savedPath = await exportCsv(periods, outputPath)
       }
     } catch (err) {
-      // Protection guards in export.ts (symlink refusal, non-codeburn folder refusal, etc.)
+      // Protection guards in export.ts (symlink refusal, non-quantum-watcher folder refusal, etc.)
       // throw with a user-readable message. Print just the message, not the stack, so the CLI
       // doesn't spray its internals at the user.
       const message = err instanceof Error ? err.message : String(err)
@@ -905,7 +906,7 @@ program
 
 program
   .command('currency [code]')
-  .description('Set display currency (e.g. codeburn currency GBP)')
+  .description('Set display currency (e.g. quantum-watcher currency GBP)')
   .option('--symbol <symbol>', 'Override the currency symbol')
   .option('--reset', 'Reset to USD (removes currency config)')
   .action(async (code?: string, opts?: { symbol?: string; reset?: boolean }) => {
@@ -956,7 +957,7 @@ program
 
 program
   .command('model-alias [from] [to]')
-  .description('Map a provider model name to a canonical one for pricing (e.g. codeburn model-alias my-model claude-opus-4-6)')
+  .description('Map a provider model name to a canonical one for pricing (e.g. quantum-watcher model-alias my-model claude-opus-4-6)')
   .option('--remove <from>', 'Remove an alias')
   .option('--list', 'List configured aliases')
   .action(async (from?: string, to?: string, opts?: { remove?: string; list?: boolean }) => {
@@ -992,7 +993,7 @@ program
     }
 
     if (!from || !to) {
-      console.error('\n  Usage: codeburn model-alias <from> <to>\n')
+      console.error('\n  Usage: quantum-watcher model-alias <from> <to>\n')
       process.exitCode = 1
       return
     }
@@ -1064,7 +1065,7 @@ program
     }
 
     if (mode !== 'set') {
-      console.error('\n  Usage: codeburn plan [set <id> | reset]\n')
+      console.error('\n  Usage: quantum-watcher plan [set <id> | reset]\n')
       process.exitCode = 1
       return
     }
@@ -1191,7 +1192,7 @@ program
     if (opts.from || opts.to) {
       const customRange = parseDateRangeFlags(opts.from, opts.to)
       if (!customRange) {
-        process.stderr.write('codeburn: --from and --to must be valid YYYY-MM-DD dates\n')
+        process.stderr.write('quantum-watcher: --from and --to must be valid YYYY-MM-DD dates\n')
         process.exit(1)
       }
       range = customRange
@@ -1221,7 +1222,7 @@ program
     } else if (fmt === 'table') {
       process.stdout.write(renderTable(rows, { byTask: !!opts.byTask, showTotals: opts.totals !== false }) + '\n')
     } else {
-      process.stderr.write(`codeburn: unknown --format "${opts.format}". Choose table, markdown, json, or csv.\n`)
+      process.stderr.write(`quantum-watcher: unknown --format "${opts.format}". Choose table, markdown, json, or csv.\n`)
       process.exit(1)
     }
   })
@@ -1262,7 +1263,7 @@ program
           : '\n  Antigravity CLI usage capture removed.\n')
         return
       }
-      console.error('\n  Usage: codeburn antigravity-hook <install|uninstall>\n')
+      console.error('\n  Usage: quantum-watcher antigravity-hook <install|uninstall>\n')
       process.exit(1)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
