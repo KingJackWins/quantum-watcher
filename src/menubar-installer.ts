@@ -19,7 +19,7 @@ const SUPPORTED_OS = 'darwin'
 const MIN_MACOS_MAJOR = 14
 const PERSISTED_CLI_PATH = join(homedir(), 'Library', 'Application Support', 'CodeBurn', 'codeburn-cli-path.v1')
 const PERSISTENT_CLI_REQUIRED_MESSAGE =
-  'The menubar app needs a persistent codeburn command. Install CodeBurn globally first: npm install -g codeburn'
+  'The menubar app needs a persistent quantum-watcher command. Install Quantum Watcher globally first: npm install -g quantum-watcher'
 const DEFAULT_CLI_LOOKUP_PATHS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin']
 
 export type InstallResult = { installedPath: string; launched: boolean }
@@ -261,7 +261,7 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
     return { installedPath: targetPath, launched: true }
   }
 
-  console.log('Looking up the latest CodeBurn Menubar release...')
+  console.log('Looking up the latest Quantum Watcher Menubar release...')
   const { zip, checksum } = await fetchLatestReleaseAssets()
 
   const stagingDir = await mkdtemp(join(tmpdir(), 'codeburn-menubar-'))
@@ -298,7 +298,7 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
     }
     await rename(unpackedApp, targetPath)
 
-    console.log('Launching CodeBurn Menubar...')
+    console.log('Launching Quantum Watcher Menubar...')
     await runCommand('/usr/bin/open', [targetPath])
     return { installedPath: targetPath, launched: true }
   } finally {

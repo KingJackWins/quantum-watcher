@@ -1,11 +1,11 @@
 {
-  "name": "codeburn",
+  "name": "quantum-watcher",
   "version": "0.9.11",
-  "description": "See where your AI coding tokens go - by task, tool, model, and project",
+  "description": "The quantum fuel gauge for your AI coding spend — cost, tokens, agents, and projects",
   "type": "module",
   "main": "./dist/cli.js",
   "bin": {
-    "codeburn": "dist/cli.js"
+    "quantum-watcher": "dist/cli.js"
   },
   "files": [
     "dist"
@@ -35,16 +35,16 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "author": "AgentSeal <hello@agentseal.org>",
+  "author": "Quantum Memory AI <jack@quantummemory.ai>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/getagentseal/codeburn.git"
+    "url": "git+https://github.com/KingJackWins/quantum-watcher.git"
   },
   "bugs": {
-    "url": "https://github.com/getagentseal/codeburn/issues"
+    "url": "https://github.com/KingJackWins/quantum-watcher/issues"
   },
-  "homepage": "https://github.com/getagentseal/codeburn#readme",
+  "homepage": "https://github.com/KingJackWins/quantum-watcher#readme",
   "dependencies": {
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
