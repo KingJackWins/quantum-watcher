@@ -2,21 +2,29 @@ import SwiftUI
 
 struct HeroSection: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Specular "shine" -- a small streak of light reflecting off the
             // glass above the caption, like a highlight on a curved pane.
+            // Light mode runs near-opaque white with an ink under-stroke so
+            // the streak still reads on a bright card.
             Capsule()
                 .fill(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.5), Color.white.opacity(0.0)],
+                        colors: [Color.white.opacity(colorScheme == .light ? 0.9 : 0.5), Color.white.opacity(0.0)],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
                 )
+                .overlay {
+                    if colorScheme == .light {
+                        Capsule().stroke(Color.black.opacity(0.06), lineWidth: 0.5)
+                    }
+                }
                 .frame(width: 36, height: 3)
-                .opacity(0.6)
+                .opacity(colorScheme == .light ? 1.0 : 0.6)
 
             SectionCaption(text: caption)
 

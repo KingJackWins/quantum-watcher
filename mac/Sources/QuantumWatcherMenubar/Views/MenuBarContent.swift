@@ -4,36 +4,46 @@ import SwiftUI
 /// Popover root. Assembles all sections matching the HTML design spec.
 struct MenuBarContent: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
             // Ambient accent light inside the glass. Reads Theme.brandAccent
             // dynamically so palette switches re-tint the whole atmosphere.
+            // Light mode runs stronger and adds a vertical tinted-glass wash;
+            // otherwise the popover reads as flat white.
             RadialGradient(
-                colors: [Theme.brandAccent.opacity(0.16), .clear],
+                colors: [Theme.brandAccent.opacity(colorScheme == .light ? 0.20 : 0.16), .clear],
                 center: UnitPoint(x: 0.5, y: -0.1),
                 startRadius: 0,
-                endRadius: 340
+                endRadius: colorScheme == .light ? 360 : 340
             )
             RadialGradient(
-                colors: [Theme.brandAccent.opacity(0.07), .clear],
+                colors: [Theme.brandAccent.opacity(colorScheme == .light ? 0.10 : 0.07), .clear],
                 center: UnitPoint(x: 0.92, y: 1.05),
                 startRadius: 0,
                 endRadius: 260
             )
+            if colorScheme == .light {
+                LinearGradient(
+                    colors: [Theme.brandAccent.opacity(0.06), .clear],
+                    startPoint: .top,
+                    endPoint: UnitPoint(x: 0.5, y: 0.4)
+                )
+            }
 
             VStack(spacing: 0) {
             Header()
 
             // Glass separator
             Rectangle()
-                .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing))
+                .fill(Glass.separator(for: colorScheme))
                 .frame(height: 0.5)
 
             if showAgentTabs {
                 AgentTabStrip()
                 Rectangle()
-                    .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing))
+                    .fill(Glass.separator(for: colorScheme))
                     .frame(height: 0.5)
             }
 
@@ -97,7 +107,7 @@ struct MenuBarContent: View {
 
             // Glass footer separator
             Rectangle()
-                .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing))
+                .fill(Glass.separator(for: colorScheme))
                 .frame(height: 0.5)
 
             FooterBar()

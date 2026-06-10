@@ -72,12 +72,13 @@ struct ActivityRow: View {
 /// Fixed-width horizontal bar that shows a fill fraction.
 struct FixedBar: View {
     let fraction: Double
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Glass.trackFill(for: colorScheme))
                 RoundedRectangle(cornerRadius: 2)
                     .fill(
                         LinearGradient(

@@ -213,6 +213,7 @@ private struct AgentTab: View {
     @State private var hoverEnterTask: DispatchWorkItem?
     @State private var hoverExitTask: DispatchWorkItem?
     @State private var clickDismissed = false
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Providers whose AgentTab chip reserves a 3pt bar slot underneath the
     /// label, even when not yet connected. Driven by which providers we
@@ -259,6 +260,15 @@ private struct AgentTab: View {
                                 endPoint: .bottom
                             )
                         )
+                } else if colorScheme == .light {
+                    // Raised glass key: bright frost over the material with an
+                    // ink hairline -- white-on-material is invisible in light mode.
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.white.opacity(0.55))
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5)
                 } else {
                     RoundedRectangle(cornerRadius: 7)
                         .fill(.ultraThinMaterial)
@@ -267,7 +277,13 @@ private struct AgentTab: View {
                 }
             }
             .compositingGroup()
-            .shadow(color: isActive ? Theme.brandAccent.opacity(0.45) : .clear, radius: 6, y: 2)
+            .shadow(
+                color: isActive
+                    ? Theme.brandAccent.opacity(0.45)
+                    : (colorScheme == .light ? Color.black.opacity(0.08) : .clear),
+                radius: isActive ? 6 : 2,
+                y: isActive ? 2 : 1
+            )
         )
         .foregroundStyle(isActive ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
         .contentShape(Rectangle())

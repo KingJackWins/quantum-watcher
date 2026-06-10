@@ -3,6 +3,7 @@ import SwiftUI
 struct PeriodSegmentedControl: View {
     @Environment(AppStore.self) private var store
     @State private var showingCalendar = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 1) {
@@ -22,21 +23,32 @@ struct PeriodSegmentedControl: View {
                 .background(
                     ZStack {
                         if isActive {
-                            // Raised glass key: frost fill + top-lit specular rim.
+                            // Raised glass key. Light mode: near-solid white knob
+                            // with an ink hairline; dark mode: frost fill +
+                            // top-lit specular rim.
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.white.opacity(0.12))
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(
-                                    LinearGradient(
-                                        colors: [Color.white.opacity(0.25), Color.white.opacity(0.05)],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    ),
-                                    lineWidth: 0.5
-                                )
+                                .fill(Color.white.opacity(colorScheme == .light ? 0.85 : 0.12))
+                            if colorScheme == .light {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
+                            } else {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(
+                                        LinearGradient(
+                                            colors: [Color.white.opacity(0.25), Color.white.opacity(0.05)],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        ),
+                                        lineWidth: 0.5
+                                    )
+                            }
                         }
                     }
-                    .shadow(color: .black.opacity(isActive ? 0.25 : 0), radius: 3, y: 1)
+                    .shadow(
+                        color: .black.opacity(isActive ? (colorScheme == .light ? 0.15 : 0.25) : 0),
+                        radius: 3,
+                        y: colorScheme == .light ? 1.5 : 1
+                    )
                 )
             }
 
@@ -55,19 +67,28 @@ struct PeriodSegmentedControl: View {
                 ZStack {
                     if store.isDayMode {
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.white.opacity(0.12))
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [Color.white.opacity(0.25), Color.white.opacity(0.05)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                ),
-                                lineWidth: 0.5
-                            )
+                            .fill(Color.white.opacity(colorScheme == .light ? 0.85 : 0.12))
+                        if colorScheme == .light {
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
+                        } else {
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(
+                                    LinearGradient(
+                                        colors: [Color.white.opacity(0.25), Color.white.opacity(0.05)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    lineWidth: 0.5
+                                )
+                        }
                     }
                 }
-                .shadow(color: .black.opacity(store.isDayMode ? 0.25 : 0), radius: 3, y: 1)
+                .shadow(
+                    color: .black.opacity(store.isDayMode ? (colorScheme == .light ? 0.15 : 0.25) : 0),
+                    radius: 3,
+                    y: colorScheme == .light ? 1.5 : 1
+                )
             )
             .popover(isPresented: $showingCalendar, arrowEdge: .bottom) {
                 CalendarPopover(isPresented: $showingCalendar)
@@ -75,14 +96,25 @@ struct PeriodSegmentedControl: View {
             }
         }
         .padding(2)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-        )
+        .background {
+            // Recessed track. Material-on-material disappears in light mode,
+            // so swap to a faint ink fill there.
+            if colorScheme == .light {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.black.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5)
+                    )
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                    )
+            }
+        }
     }
 }
 

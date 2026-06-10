@@ -33,34 +33,84 @@ enum Theme {
     static let glassShadow = Color.black.opacity(0.15)
 }
 
-/// Liquid-glass design system. Low-opacity white overlays read as "sheen" over
-/// adaptive materials in both light and dark mode, so every token here is
-/// appearance-agnostic by construction.
+/// Liquid-glass design system, resolved per color scheme.
+///
+/// Dark mode: low-opacity white overlays read as "sheen" over dark materials.
+/// Light mode: those same white overlays are nearly invisible on a light
+/// material backdrop, so the recipe swaps to bright frost fills, near-white
+/// specular rims, dark definition lines, and ink-toned separators/tracks.
 @MainActor
 enum Glass {
-    /// Simulates light catching the top-leading edge of a pane of glass:
-    /// bright at top-left, falling off through the middle, with a faint
-    /// bounce-light on the bottom-trailing edge.
-    static let specularBorder = LinearGradient(
-        stops: [
-            .init(color: .white.opacity(0.28), location: 0.0),
-            .init(color: .white.opacity(0.06), location: 0.5),
-            .init(color: .white.opacity(0.12), location: 1.0),
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    /// Simulates light catching the top-leading edge of a pane of glass.
+    /// Light: a bright white rim falling to a soft quarter-white, paired with
+    /// a dark outer definition line in `GlassCard`. Dark: bright at top-left,
+    /// falling off through the middle, with a faint bounce-light on the
+    /// bottom-trailing edge.
+    static func specularBorder(for scheme: ColorScheme) -> LinearGradient {
+        if scheme == .light {
+            return LinearGradient(
+                stops: [
+                    .init(color: .white.opacity(0.9), location: 0.0),
+                    .init(color: .white.opacity(0.2), location: 1.0),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+        return LinearGradient(
+            stops: [
+                .init(color: .white.opacity(0.28), location: 0.0),
+                .init(color: .white.opacity(0.06), location: 0.5),
+                .init(color: .white.opacity(0.12), location: 1.0),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     /// Frost layer painted over the material so cards feel solid, not hollow.
-    static let cardFill = Color.white.opacity(0.05)
+    /// Light mode uses a strong white frost so the slab clearly brightens
+    /// above the backdrop.
+    static func cardFill(for scheme: ColorScheme) -> Color {
+        scheme == .light ? Color.white.opacity(0.5) : Color.white.opacity(0.04)
+    }
 
-    /// Soft vertical sheen across the top ~40% of a card -- the "light from
+    /// Soft vertical sheen across the top ~45% of a card -- the "light from
     /// above" that makes the surface read as curved glass.
-    static let topSheen = LinearGradient(
-        colors: [Color.white.opacity(0.10), .clear],
-        startPoint: .top,
-        endPoint: UnitPoint(x: 0.5, y: 0.45)
-    )
+    static func topSheen(for scheme: ColorScheme) -> LinearGradient {
+        LinearGradient(
+            colors: [Color.white.opacity(scheme == .light ? 0.55 : 0.10), .clear],
+            startPoint: .top,
+            endPoint: UnitPoint(x: 0.5, y: 0.45)
+        )
+    }
+
+    /// Hairline separator. White sheen reads in dark mode; light mode needs an
+    /// ink line because white hairlines vanish on a light backdrop.
+    static func separator(for scheme: ColorScheme) -> LinearGradient {
+        LinearGradient(
+            colors: [
+                .clear,
+                scheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.14),
+                .clear,
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    /// Recessed track fill behind progress bars.
+    static func trackFill(for scheme: ColorScheme) -> Color {
+        scheme == .light ? Color.black.opacity(0.07) : Color.white.opacity(0.08)
+    }
+
+    /// Card drop shadow: softer and larger in light mode so the slab clearly
+    /// lifts off the bright backdrop.
+    static func cardShadow(for scheme: ColorScheme) -> (color: Color, radius: CGFloat, y: CGFloat) {
+        scheme == .light
+            ? (Color.black.opacity(0.12), 14, 7)
+            : (Color.black.opacity(0.18), 10, 5)
+    }
 
     /// Accent glow pattern: apply as `.shadow(color: accentGlow(Theme.brandAccent), radius: …)`
     /// to make an accent-filled element appear lit from within.
@@ -71,22 +121,33 @@ enum Glass {
 
 /// Floating glass card: adaptive material base, frost layer, top sheen, a
 /// 0.75pt specular border, and a drop shadow that lifts it off the backdrop.
+/// Light mode adds a dark outer definition line so edges read against the
+/// light material; dark mode keeps the original sheen-only recipe.
 struct GlassCard: ViewModifier {
     var cornerRadius: CGFloat = 12
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let shadow = Glass.cardShadow(for: colorScheme)
         content
             .background {
                 ZStack {
                     shape.fill(.ultraThinMaterial)
-                    shape.fill(Color.white.opacity(0.04))
-                    Glass.topSheen.clipShape(shape)
+                    shape.fill(Glass.cardFill(for: colorScheme))
+                    Glass.topSheen(for: colorScheme).clipShape(shape)
                 }
                 .compositingGroup()
-                .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
+                .shadow(color: shadow.color, radius: shadow.radius, y: shadow.y)
             }
-            .overlay(shape.strokeBorder(Glass.specularBorder, lineWidth: 0.75))
+            .overlay(shape.strokeBorder(Glass.specularBorder(for: colorScheme), lineWidth: 0.75))
+            .overlay {
+                if colorScheme == .light {
+                    // Definition line just outside the bright rim -- without it
+                    // the card edge dissolves into the light backdrop.
+                    shape.inset(by: -0.5).stroke(Color.black.opacity(0.10), lineWidth: 0.5)
+                }
+            }
     }
 }
 
