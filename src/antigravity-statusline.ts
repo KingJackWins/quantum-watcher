@@ -7,6 +7,13 @@ import {
   recordAntigravityStatusLinePayload,
   snapshotAntigravityStatusLinePayload,
 } from './providers/antigravity.js'
+import {
+  buildPersistentCodeburnLookupPath,
+  resolvePersistentCodeburnPathFromPath,
+} from './persistent-quantum-watcher.js'
+
+export { buildPersistentCodeburnLookupPath as buildAntigravityHookLookupPath } from './persistent-quantum-watcher.js'
+export { resolvePersistentCodeburnPathFromPath } from './persistent-quantum-watcher.js'
 
 type Settings = Record<string, unknown> & {
   statusLine?: {
@@ -18,12 +25,15 @@ type Settings = Record<string, unknown> & {
 
 type StatusLineSettings = NonNullable<Settings['statusLine']>
 
+const PERSISTENT_CLI_REQUIRED_MESSAGE =
+  'The Antigravity hook needs a persistent quantum-watcher command. Install QuantumWatcher globally first: npm install -g quantum-watcher'
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isQuantumWatcherHook(command: unknown): boolean {
-  return typeof command === 'string' && command.includes('agy-statusline-hook')
+  return typeof command === 'string' && /(?:^|\s)agy-statusline-hook$/.test(command.trim())
 }
 
 function shellQuote(value: string): string {
@@ -31,19 +41,21 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-function hookCommand(): string {
-  const script = process.argv[1] || 'quantum-watcher'
-  if (script === 'quantum-watcher') return 'quantum-watcher agy-statusline-hook'
-  return `${shellQuote(process.execPath)} ${shellQuote(script)} agy-statusline-hook`
+async function hookCommand(): Promise<string> {
+  const quantumWatcherPath = await resolvePersistentCodeburnPathFromPath(
+    buildPersistentCodeburnLookupPath(),
+    PERSISTENT_CLI_REQUIRED_MESSAGE,
+  )
+  return `${shellQuote(quantumWatcherPath)} agy-statusline-hook`
 }
 
 function settingsPath(): string {
-  return process.env['QUANTUM_WATCHER_ANTIGRAVITY_SETTINGS_PATH'] ?? process.env['CODEBURN_ANTIGRAVITY_SETTINGS_PATH']
+  return process.env['CODEBURN_ANTIGRAVITY_SETTINGS_PATH']
     ?? join(homedir(), '.gemini', 'antigravity-cli', 'settings.json')
 }
 
 function quantumWatcherCacheDir(): string {
-  return process.env['QUANTUM_WATCHER_CACHE_DIR'] ?? process.env['CODEBURN_CACHE_DIR'] ?? join(homedir(), '.cache', 'quantum-watcher')
+  return process.env['CODEBURN_CACHE_DIR'] ?? join(homedir(), '.cache', 'quantum-watcher')
 }
 
 function previousStatusLinePath(): string {
@@ -115,12 +127,15 @@ export async function installAntigravityStatusLineHook(force = false): Promise<'
     )
   }
 
-  if (isQuantumWatcherHook(existing?.command)) return 'already-installed'
+  const command = await hookCommand()
+  if (isQuantumWatcherHook(existing?.command) && existing?.command === command && existing.type === 'command' && existing.padding === 0) {
+    return 'already-installed'
+  }
   if (existing && !isQuantumWatcherHook(existing.command)) await savePreviousStatusLine(existing)
 
   settings.statusLine = {
     type: 'command',
-    command: hookCommand(),
+    command,
     padding: 0,
   }
   await writeSettings(settings)

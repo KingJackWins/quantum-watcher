@@ -67,9 +67,9 @@ function assistantNoEditLine(sessionId: string, timestamp: string, messageId: st
   })
 }
 
-describe('codeburn report --format json daily[] one-shot fields (issue #279)', () => {
+describe('quantum-watcher report --format json daily[] one-shot fields (issue #279)', () => {
   it('exposes per-day turns / editTurns / oneShotTurns / oneShotRate', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'codeburn-cli-json-daily-'))
+    const home = await mkdtemp(join(tmpdir(), 'quantum-watcher-cli-json-daily-'))
 
     try {
       const projectDir = join(home, '.claude', 'projects', 'app')
@@ -131,7 +131,7 @@ describe('codeburn report --format json daily[] one-shot fields (issue #279)', (
   })
 
   it('reports null oneShotRate when the day has no edit turns', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'codeburn-cli-json-daily-'))
+    const home = await mkdtemp(join(tmpdir(), 'quantum-watcher-cli-json-daily-'))
 
     try {
       const projectDir = join(home, '.claude', 'projects', 'app')
@@ -171,7 +171,7 @@ describe('codeburn report --format json daily[] one-shot fields (issue #279)', (
   })
 
   it('filters a single review day with --day', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'codeburn-cli-json-day-'))
+    const home = await mkdtemp(join(tmpdir(), 'quantum-watcher-cli-json-day-'))
 
     try {
       const projectDir = join(home, '.claude', 'projects', 'app')
@@ -218,7 +218,7 @@ describe('codeburn report --format json daily[] one-shot fields (issue #279)', (
   })
 
   it('rejects --day combined with --from/--to', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'codeburn-cli-json-day-'))
+    const home = await mkdtemp(join(tmpdir(), 'quantum-watcher-cli-json-day-'))
 
     try {
       const result = runCli([

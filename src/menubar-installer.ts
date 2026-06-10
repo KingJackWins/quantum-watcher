@@ -7,20 +7,24 @@ import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 
+import {
+  buildPersistentCodeburnLookupPath,
+  resolvePersistentCodeburnPathFromWhichOutput,
+} from './persistent-quantum-watcher.js'
+
 /// Public GitHub repo that hosts macOS release builds. CLI and menubar releases share
 /// the repository, so we scan recent releases and choose the newest `mac-v*` release
 /// that actually contains the menubar zip.
-const RELEASE_API = 'https://api.github.com/repos/getagentseal/codeburn/releases?per_page=20'
-const APP_BUNDLE_NAME = 'CodeBurnMenubar.app'
-const EXPECTED_BUNDLE_ID = 'org.agentseal.codeburn-menubar'
-const VERSIONED_ASSET_PATTERN = /^CodeBurnMenubar-v.+\.zip$/
-const APP_PROCESS_NAME = 'CodeBurnMenubar'
+const RELEASE_API = 'https://api.github.com/repos/KingJackWins/quantum-watcher/releases?per_page=20'
+const APP_BUNDLE_NAME = 'QuantumWatcherMenubar.app'
+const EXPECTED_BUNDLE_ID = 'org.quantummemory.quantum-watcher-menubar'
+const VERSIONED_ASSET_PATTERN = /^QuantumWatcherMenubar-v.+\.zip$/
+const APP_PROCESS_NAME = 'QuantumWatcherMenubar'
 const SUPPORTED_OS = 'darwin'
 const MIN_MACOS_MAJOR = 14
-const PERSISTED_CLI_PATH = join(homedir(), 'Library', 'Application Support', 'CodeBurn', 'codeburn-cli-path.v1')
+const PERSISTED_CLI_PATH = join(homedir(), 'Library', 'Application Support', 'QuantumWatcher', 'quantum-watcher-cli-path.v1')
 const PERSISTENT_CLI_REQUIRED_MESSAGE =
-  'The menubar app needs a persistent quantum-watcher command. Install Quantum Watcher globally first: npm install -g quantum-watcher'
-const DEFAULT_CLI_LOOKUP_PATHS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin']
+  'The menubar app needs a persistent quantum-watcher command. Install QuantumWatcher globally first: npm install -g quantum-watcher'
 
 export type InstallResult = { installedPath: string; launched: boolean }
 
@@ -33,7 +37,7 @@ export function resolveMenubarReleaseAssets(release: ReleaseResponse): ResolvedA
   if (!zip) {
     throw new Error(
       `No ${APP_BUNDLE_NAME} versioned zip found in release ${release.tag_name}. ` +
-      `Check https://github.com/getagentseal/codeburn/releases.`
+      `Check https://github.com/KingJackWins/quantum-watcher/releases.`
     )
   }
   const checksum = release.assets.find(a => a.name === `${zip.name}.sha256`)
@@ -52,32 +56,13 @@ export function resolveLatestMenubarReleaseAssets(releases: ReleaseResponse[]): 
       continue
     }
   }
-  throw new Error('No mac-v* release with a CodeBurnMenubar-v*.zip and checksum was found.')
+  throw new Error('No mac-v* release with a QuantumWatcherMenubar-v*.zip and checksum was found.')
 }
 
-export function buildPersistentCodeburnLookupPath(existingPath = process.env.PATH ?? ''): string {
-  const parts = existingPath.split(':').filter(Boolean)
-  for (const fallback of DEFAULT_CLI_LOOKUP_PATHS) {
-    if (!parts.includes(fallback)) parts.push(fallback)
-  }
-  return parts.join(':')
-}
-
-function isTransientNpxPath(path: string): boolean {
-  return path.includes('/_npx/') || path.includes('/.npm/_npx/')
-}
-
-export function resolvePersistentCodeburnPathFromWhichOutput(output: string): string {
-  const paths = output
-    .split(/\r?\n/)
-    .map(path => path.trim())
-    .filter(Boolean)
-
-  const persistentPath = paths.find(path => path.startsWith('/') && !isTransientNpxPath(path))
-  if (persistentPath) return persistentPath
-
-  throw new Error(PERSISTENT_CLI_REQUIRED_MESSAGE)
-}
+export {
+  buildPersistentCodeburnLookupPath,
+  resolvePersistentCodeburnPathFromWhichOutput,
+} from './persistent-quantum-watcher.js'
 
 function userApplicationsDir(): string {
   return join(homedir(), 'Applications')
@@ -119,7 +104,7 @@ async function sysProductVersion(): Promise<string> {
 async function fetchLatestReleaseAssets(): Promise<ResolvedAssets> {
   const response = await fetch(RELEASE_API, {
     headers: {
-      'User-Agent': 'codeburn-menubar-installer',
+      'User-Agent': 'quantum-watcher-menubar-installer',
       Accept: 'application/vnd.github+json',
     },
   })
@@ -132,7 +117,7 @@ async function fetchLatestReleaseAssets(): Promise<ResolvedAssets> {
 
 async function verifyChecksum(archivePath: string, checksumUrl: string): Promise<void> {
   const response = await fetch(checksumUrl, {
-    headers: { 'User-Agent': 'codeburn-menubar-installer' },
+    headers: { 'User-Agent': 'quantum-watcher-menubar-installer' },
     redirect: 'follow',
   })
   if (!response.ok) {
@@ -154,7 +139,7 @@ async function verifyChecksum(archivePath: string, checksumUrl: string): Promise
 
 async function downloadToFile(url: string, destPath: string): Promise<void> {
   const response = await fetch(url, {
-    headers: { 'User-Agent': 'codeburn-menubar-installer' },
+    headers: { 'User-Agent': 'quantum-watcher-menubar-installer' },
     redirect: 'follow',
   })
   if (!response.ok || response.body === null) {
@@ -210,18 +195,18 @@ async function resolvePersistentCodeburnPath(): Promise<string> {
       `PATH=${buildPersistentCodeburnLookupPath()}`,
       'which',
       '-a',
-      'codeburn',
+      'quantum-watcher',
     ])
   } catch {
     throw new Error(PERSISTENT_CLI_REQUIRED_MESSAGE)
   }
 
-  return resolvePersistentCodeburnPathFromWhichOutput(output)
+  return resolvePersistentCodeburnPathFromWhichOutput(output, PERSISTENT_CLI_REQUIRED_MESSAGE)
 }
 
 async function persistCodeburnPath(): Promise<void> {
   const cliPath = await resolvePersistentCodeburnPath()
-  await mkdir(join(homedir(), 'Library', 'Application Support', 'CodeBurn'), { recursive: true, mode: 0o700 })
+  await mkdir(join(homedir(), 'Library', 'Application Support', 'QuantumWatcher'), { recursive: true, mode: 0o700 })
   await writeFile(PERSISTED_CLI_PATH, `${cliPath}\n`, { mode: 0o600 })
   await chmod(PERSISTED_CLI_PATH, 0o600)
 }
@@ -261,10 +246,10 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
     return { installedPath: targetPath, launched: true }
   }
 
-  console.log('Looking up the latest Quantum Watcher Menubar release...')
+  console.log('Looking up the latest QuantumWatcher Menubar release...')
   const { zip, checksum } = await fetchLatestReleaseAssets()
 
-  const stagingDir = await mkdtemp(join(tmpdir(), 'codeburn-menubar-'))
+  const stagingDir = await mkdtemp(join(tmpdir(), 'quantum-watcher-menubar-'))
   try {
     const archivePath = join(stagingDir, zip.name)
     console.log(`Downloading ${zip.name}...`)
@@ -298,7 +283,7 @@ export async function installMenubarApp(options: { force?: boolean } = {}): Prom
     }
     await rename(unpackedApp, targetPath)
 
-    console.log('Launching Quantum Watcher Menubar...')
+    console.log('Launching QuantumWatcher Menubar...')
     await runCommand('/usr/bin/open', [targetPath])
     return { installedPath: targetPath, launched: true }
   } finally {

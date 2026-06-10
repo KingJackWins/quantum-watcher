@@ -21,7 +21,7 @@ describe('readSessionFile', () => {
   })
 
   async function tmpPath(content: string | Buffer): Promise<string> {
-    const base = await mkdtemp(join(tmpdir(), 'codeburn-fs-'))
+    const base = await mkdtemp(join(tmpdir(), 'quantum-watcher-fs-'))
     tmpDirs.push(base)
     const p = join(base, 'x.jsonl')
     await writeFile(p, content)
@@ -53,7 +53,7 @@ describe('readSessionFile', () => {
     await readSessionFile(p)
     expect(spy).toHaveBeenCalled()
     const msg = (spy.mock.calls[0][0] as string)
-    expect(msg).toContain('codeburn')
+    expect(msg).toContain('quantum-watcher')
     expect(msg).toContain('oversize')
     spy.mockRestore()
   })
@@ -74,7 +74,7 @@ describe('readSessionLines', () => {
   })
 
   async function tmpPath(content: string): Promise<string> {
-    const base = await mkdtemp(join(tmpdir(), 'codeburn-lines-'))
+    const base = await mkdtemp(join(tmpdir(), 'quantum-watcher-lines-'))
     tmpDirs.push(base)
     const p = join(base, 'session.jsonl')
     await writeFile(p, content)

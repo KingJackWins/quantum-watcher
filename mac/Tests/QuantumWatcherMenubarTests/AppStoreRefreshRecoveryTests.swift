@@ -16,6 +16,7 @@ private func menubarPayload(cost: Double) -> MenubarPayload {
             cacheHitPercent: 0,
             topActivities: [],
             topModels: [],
+            localModelSavings: LocalModelSavings(totalUSD: 0, calls: 0, byModel: [], byProvider: []),
             providers: ["claude": cost],
             topProjects: [],
             modelEfficiency: [],
@@ -117,6 +118,24 @@ struct AppStoreRefreshRecoveryTests {
 
         #expect(!canRecover)
         #expect(store.isInFlightForTesting(period: .today, provider: .all))
+    }
+
+    @Test("prepareStuckLoadingRecovery clears stale loading bookkeeping for the current key")
+    func popoverRecoveryClearsStuckLoading() {
+        let store = AppStore()
+        // Seed an orphaned in-flight entry older than the 60s watchdog so the
+        // stale-clear path runs, mimicking a fetch torn down across sleep/wake.
+        store.seedInFlightForTesting(
+            period: .today,
+            provider: .all,
+            insertedAt: Date().addingTimeInterval(-120)
+        )
+        #expect(store.isInFlightForTesting(period: .today, provider: .all))
+
+        let willFetch = store.prepareStuckLoadingRecovery()
+
+        #expect(willFetch)
+        #expect(!store.isInFlightForTesting(period: .today, provider: .all))
     }
 
 }

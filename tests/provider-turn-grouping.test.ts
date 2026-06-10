@@ -14,9 +14,9 @@ let originalVibeHome: string | undefined
 let clearParserCache: (() => void) | undefined
 
 beforeEach(async () => {
-  home = await mkdtemp(join(tmpdir(), 'codeburn-turn-group-home-'))
-  cacheDir = await mkdtemp(join(tmpdir(), 'codeburn-turn-group-cache-'))
-  vibeHome = await mkdtemp(join(tmpdir(), 'codeburn-turn-group-vibe-'))
+  home = await mkdtemp(join(tmpdir(), 'quantum-watcher-turn-group-home-'))
+  cacheDir = await mkdtemp(join(tmpdir(), 'quantum-watcher-turn-group-cache-'))
+  vibeHome = await mkdtemp(join(tmpdir(), 'quantum-watcher-turn-group-vibe-'))
   originalHome = process.env['HOME']
   originalCacheDir = process.env['CODEBURN_CACHE_DIR']
   originalVibeHome = process.env['VIBE_HOME']

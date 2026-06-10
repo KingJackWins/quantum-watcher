@@ -7,6 +7,7 @@ import Foundation
 private let maxPayloadBytes = 20 * 1024 * 1024
 private let maxStderrBytes = 256 * 1024
 private let spawnTimeoutSeconds: UInt64 = 45
+private let maxConcurrentSpawns = 6
 
 enum DataClientError: Error {
     case spawn(String)
@@ -49,19 +50,49 @@ struct DataClient {
         }
     }
 
-    private struct ProcessResult {
+    struct ProcessResult {
         let stdout: Data
         let stderr: String
         let exitCode: Int32
     }
 
-    private static func runCLI(subcommand: [String]) async throws -> ProcessResult {
-        let process = QuantumWatcherCLI.makeProcess(subcommand: subcommand)
+    /// Caps concurrent CLI spawns so a wake-burst of refreshes can't fan out into
+    /// dozens of node processes at once.
+    private static let spawnLimiter = AsyncSemaphore(maxConcurrentSpawns)
 
+    private static func runCLI(subcommand: [String]) async throws -> ProcessResult {
+        await spawnLimiter.acquire()
+        defer { Task { await spawnLimiter.release() } }
+        let process = QuantumWatcherCLI.makeProcess(subcommand: subcommand)
+        return try await runProcess(process,
+                                    timeoutSeconds: spawnTimeoutSeconds,
+                                    label: subcommand.joined(separator: " "))
+    }
+
+    /// Runs an already-configured process to completion, draining its output and
+    /// enforcing a hard timeout.
+    ///
+    /// CRITICAL: nothing here may block a worker thread waiting for the process.
+    /// `process.waitUntilExit()` is a blocking syscall. An earlier fix moved it
+    /// onto a global(qos:.utility) queue with the timeout on that SAME queue — but
+    /// under sustained load every utility worker ended up blocked in waitUntilExit,
+    /// so the timeout could never be scheduled to kill them and the menubar wedged
+    /// on "Loading…" forever (confirmed via sample: threads parked in
+    /// waitUntilExit, timeout never firing). Instead we await
+    /// `process.terminationHandler`, which fires on a Foundation-managed queue and
+    /// blocks nothing, so the timeout always has a free thread to fire on.
+    static func runProcess(_ process: Process,
+                           timeoutSeconds: UInt64,
+                           label: String) async throws -> ProcessResult {
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
+
+        // Bridge the process exit to an async signal set up BEFORE run(), so the
+        // exit can never be missed and the wait never blocks a worker thread.
+        let exitSignal = ProcessExitSignal()
+        process.terminationHandler = { _ in exitSignal.fulfill() }
 
         do {
             try process.run()
@@ -69,15 +100,17 @@ struct DataClient {
             throw DataClientError.spawn(error.localizedDescription)
         }
 
-        let timeoutTask = Task.detached(priority: .utility) {
-            try? await Task.sleep(nanoseconds: spawnTimeoutSeconds * 1_000_000_000)
+        let timeoutTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timeoutTimer.schedule(deadline: .now() + .seconds(Int(timeoutSeconds)))
+        timeoutTimer.setEventHandler {
             if process.isRunning {
                 NSLog("QuantumWatcher: CLI subprocess timed out after %llus for %@ — terminating",
-                      spawnTimeoutSeconds, subcommand.joined(separator: " "))
+                      timeoutSeconds, label)
                 terminateWithEscalation(process)
             }
         }
-        defer { timeoutTask.cancel() }
+        timeoutTimer.resume()
+        defer { timeoutTimer.cancel() }
 
         let outHandle = outPipe.fileHandleForReading
         let errHandle = errPipe.fileHandleForReading
@@ -90,7 +123,9 @@ struct DataClient {
         }
         try? outHandle.close()
         try? errHandle.close()
-        process.waitUntilExit()
+        // Wait for exit via terminationHandler, never by parking a worker thread
+        // in waitUntilExit (see the doc comment above for why that wedged).
+        await exitSignal.wait()
 
         if out.count >= maxPayloadBytes {
             throw DataClientError.outputTooLarge
@@ -140,5 +175,62 @@ struct DataClient {
             }
         }
         return buffer
+    }
+}
+
+/// One-shot async signal that bridges `Process.terminationHandler` (invoked on a
+/// Foundation-internal queue) to an awaiting task without blocking a worker
+/// thread. Safe against fulfill-before-wait.
+final class ProcessExitSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fulfilled = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func fulfill() {
+        lock.lock()
+        if fulfilled { lock.unlock(); return }
+        fulfilled = true
+        let cont = continuation
+        continuation = nil
+        lock.unlock()
+        cont?.resume()
+    }
+
+    func wait() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if fulfilled {
+                lock.unlock()
+                cont.resume()
+            } else {
+                continuation = cont
+                lock.unlock()
+            }
+        }
+    }
+}
+
+/// Minimal actor-based async semaphore. Caps concurrency without blocking a
+/// thread (unlike DispatchSemaphore.wait()).
+actor AsyncSemaphore {
+    private var available: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(_ count: Int) { available = count }
+
+    func acquire() async {
+        if available > 0 {
+            available -= 1
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            available += 1
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }

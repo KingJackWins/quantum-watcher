@@ -14,8 +14,8 @@ let previousHome: string | undefined
 let previousCacheDir: string | undefined
 
 beforeEach(async () => {
-  home = await mkdtemp(join(tmpdir(), 'codeburn-gemini-home-'))
-  cacheDir = await mkdtemp(join(tmpdir(), 'codeburn-gemini-cache-'))
+  home = await mkdtemp(join(tmpdir(), 'quantum-watcher-gemini-home-'))
+  cacheDir = await mkdtemp(join(tmpdir(), 'quantum-watcher-gemini-cache-'))
   previousHome = process.env['HOME']
   previousCacheDir = process.env['CODEBURN_CACHE_DIR']
   process.env['HOME'] = home

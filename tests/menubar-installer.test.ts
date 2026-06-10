@@ -16,25 +16,25 @@ describe('resolveMenubarReleaseAssets', () => {
     const release: ReleaseResponse = {
       tag_name: 'mac-v0.9.8',
       assets: [
-        asset('CodeBurnMenubar-dev.zip'),
-        asset('CodeBurnMenubar-dev.zip.sha256'),
-        asset('CodeBurnMenubar-v0.9.8.zip'),
-        asset('CodeBurnMenubar-v0.9.8.zip.sha256'),
+        asset('QuantumWatcherMenubar-dev.zip'),
+        asset('QuantumWatcherMenubar-dev.zip.sha256'),
+        asset('QuantumWatcherMenubar-v0.9.8.zip'),
+        asset('QuantumWatcherMenubar-v0.9.8.zip.sha256'),
       ],
     }
 
     const resolved = resolveMenubarReleaseAssets(release)
 
-    expect(resolved.zip.name).toBe('CodeBurnMenubar-v0.9.8.zip')
-    expect(resolved.checksum?.name).toBe('CodeBurnMenubar-v0.9.8.zip.sha256')
+    expect(resolved.zip.name).toBe('QuantumWatcherMenubar-v0.9.8.zip')
+    expect(resolved.checksum?.name).toBe('QuantumWatcherMenubar-v0.9.8.zip.sha256')
   })
 
   it('fails when a release only contains dev assets', () => {
     const release: ReleaseResponse = {
       tag_name: 'mac-v0.9.8',
       assets: [
-        asset('CodeBurnMenubar-dev.zip'),
-        asset('CodeBurnMenubar-dev.zip.sha256'),
+        asset('QuantumWatcherMenubar-dev.zip'),
+        asset('QuantumWatcherMenubar-dev.zip.sha256'),
       ],
     }
 
@@ -45,7 +45,7 @@ describe('resolveMenubarReleaseAssets', () => {
     const release: ReleaseResponse = {
       tag_name: 'mac-v0.9.8',
       assets: [
-        asset('CodeBurnMenubar-v0.9.8.zip'),
+        asset('QuantumWatcherMenubar-v0.9.8.zip'),
       ],
     }
 
@@ -57,14 +57,14 @@ describe('resolveMenubarReleaseAssets', () => {
       {
         tag_name: 'v0.9.9',
         assets: [
-          asset('codeburn-0.9.9.tgz'),
+          asset('quantum-watcher-0.9.9.tgz'),
         ],
       },
       {
         tag_name: 'mac-v0.9.8',
         assets: [
-          asset('CodeBurnMenubar-v0.9.8.zip'),
-          asset('CodeBurnMenubar-v0.9.8.zip.sha256'),
+          asset('QuantumWatcherMenubar-v0.9.8.zip'),
+          asset('QuantumWatcherMenubar-v0.9.8.zip.sha256'),
         ],
       },
     ]
@@ -72,7 +72,7 @@ describe('resolveMenubarReleaseAssets', () => {
     const resolved = resolveLatestMenubarReleaseAssets(releases)
 
     expect(resolved.release.tag_name).toBe('mac-v0.9.8')
-    expect(resolved.zip.name).toBe('CodeBurnMenubar-v0.9.8.zip')
+    expect(resolved.zip.name).toBe('QuantumWatcherMenubar-v0.9.8.zip')
   })
 
   it('preserves the caller PATH when building the persistent CLI lookup PATH', () => {
@@ -82,18 +82,18 @@ describe('resolveMenubarReleaseAssets', () => {
     expect(lookupPath.split(':')).toContain('/opt/homebrew/bin')
   })
 
-  it('selects a persistent codeburn binary when npx is first in which output', () => {
+  it('selects a persistent quantum-watcher binary when npx is first in which output', () => {
     const resolved = resolvePersistentCodeburnPathFromWhichOutput([
-      '/Users/me/.npm/_npx/abcd/node_modules/.bin/codeburn',
-      '/Users/me/.nvm/versions/node/v22.13.0/bin/codeburn',
+      '/Users/me/.npm/_npx/abcd/node_modules/.bin/quantum-watcher',
+      '/Users/me/.nvm/versions/node/v22.13.0/bin/quantum-watcher',
     ].join('\n'))
 
-    expect(resolved).toBe('/Users/me/.nvm/versions/node/v22.13.0/bin/codeburn')
+    expect(resolved).toBe('/Users/me/.nvm/versions/node/v22.13.0/bin/quantum-watcher')
   })
 
   it('shows the install guidance instead of a raw env failure when only npx is available', () => {
     expect(() => resolvePersistentCodeburnPathFromWhichOutput(
-      '/Users/me/.npm/_npx/abcd/node_modules/.bin/codeburn'
-    )).toThrow(/Install CodeBurn globally first/)
+      '/Users/me/.npm/_npx/abcd/node_modules/.bin/quantum-watcher'
+    )).toThrow(/Install QuantumWatcher globally first/)
   })
 })

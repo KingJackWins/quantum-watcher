@@ -57,6 +57,15 @@ export type CachedFile = {
   canonicalProjectName?: string
   mcpInventory: string[]
   turns: CachedTurn[]
+  // Claude Code only: for a subagent transcript (`subagents/.../agent-*.jsonl`),
+  // the `agentType` from its sibling `.meta.json` (e.g. `workflow-subagent`,
+  // `Explore`, `general-purpose`). Drives the Claude-scoped agent-type breakdown.
+  agentType?: string
+  // Negative-result marker: this file threw while parsing at the recorded
+  // fingerprint. Cached so we don't re-read + re-throw it on every refresh; it
+  // is re-parsed only when the file changes (fingerprint differs). Carries no
+  // turns, so it contributes no usage. (issue #441 follow-up)
+  failed?: boolean
 }
 
 export type ProviderSection = {
@@ -71,7 +80,7 @@ export type SessionCache = {
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-export const CACHE_VERSION = 3
+export const CACHE_VERSION = 4
 
 const CACHE_FILE = 'session-cache.json'
 const TEMP_FILE_MAX_AGE_MS = 5 * 60 * 1000
@@ -99,6 +108,7 @@ const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
   'kilo-code': 'worktree-project-grouping-v1',
   'roo-code': 'worktree-project-grouping-v1',
   warp: 'worktree-project-grouping-v1',
+  antigravity: 'worktree-project-grouping-v3',
 }
 
 // ── Cache Dir ──────────────────────────────────────────────────────────
@@ -375,4 +385,3 @@ export async function cleanupOrphanedTempFiles(): Promise<void> {
     }
   } catch {}
 }
-

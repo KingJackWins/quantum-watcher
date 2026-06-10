@@ -15,9 +15,9 @@ function makeProject(project: string, projectPath = project): ProjectSummary {
 
 describe('filterProjectsByName', () => {
   const projects = [
-    makeProject('codeburn', '/Users/alice/codeburn'),
-    makeProject('AgentSeal', '/Users/alice/projects/AgentSeal'),
-    makeProject('dashboard', '/Users/alice/AgentSeal/dashboard'),
+    makeProject('quantum-watcher', '/Users/alice/quantum-watcher'),
+    makeProject('Quantum Memory AI', '/Users/alice/projects/Quantum Memory AI'),
+    makeProject('dashboard', '/Users/alice/Quantum Memory AI/dashboard'),
     makeProject('sandbox', '/tmp/sandbox'),
   ]
 
@@ -28,28 +28,28 @@ describe('filterProjectsByName', () => {
   })
 
   it('include matches project name (case-insensitive substring)', () => {
-    const result = filterProjectsByName(projects, ['codeburn'])
-    expect(result.map(p => p.project)).toEqual(['codeburn'])
+    const result = filterProjectsByName(projects, ['quantum-watcher'])
+    expect(result.map(p => p.project)).toEqual(['quantum-watcher'])
   })
 
   it('include is case-insensitive', () => {
     const result = filterProjectsByName(projects, ['AGENTSEAL'])
-    expect(result.map(p => p.project).sort()).toEqual(['AgentSeal', 'dashboard'])
+    expect(result.map(p => p.project).sort()).toEqual(['Quantum Memory AI', 'dashboard'])
   })
 
   it('include matches substring in path when name does not match', () => {
     const result = filterProjectsByName(projects, ['alice/projects'])
-    expect(result.map(p => p.project)).toEqual(['AgentSeal'])
+    expect(result.map(p => p.project)).toEqual(['Quantum Memory AI'])
   })
 
   it('include uses OR semantics across patterns', () => {
-    const result = filterProjectsByName(projects, ['codeburn', 'sandbox'])
-    expect(result.map(p => p.project).sort()).toEqual(['codeburn', 'sandbox'])
+    const result = filterProjectsByName(projects, ['quantum-watcher', 'sandbox'])
+    expect(result.map(p => p.project).sort()).toEqual(['quantum-watcher', 'sandbox'])
   })
 
   it('exclude removes matching projects (AND-negation across patterns)', () => {
-    const result = filterProjectsByName(projects, undefined, ['codeburn', 'sandbox'])
-    expect(result.map(p => p.project).sort()).toEqual(['AgentSeal', 'dashboard'])
+    const result = filterProjectsByName(projects, undefined, ['quantum-watcher', 'sandbox'])
+    expect(result.map(p => p.project).sort()).toEqual(['Quantum Memory AI', 'dashboard'])
   })
 
   it('exclude matches path substring', () => {
@@ -58,8 +58,8 @@ describe('filterProjectsByName', () => {
   })
 
   it('exclude is applied after include', () => {
-    const result = filterProjectsByName(projects, ['AgentSeal'], ['dashboard'])
-    expect(result.map(p => p.project)).toEqual(['AgentSeal'])
+    const result = filterProjectsByName(projects, ['Quantum Memory AI'], ['dashboard'])
+    expect(result.map(p => p.project)).toEqual(['Quantum Memory AI'])
   })
 
   it('returns empty array when no project matches include', () => {

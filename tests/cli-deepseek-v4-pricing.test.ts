@@ -51,11 +51,11 @@ function assistantLine(model: string, timestamp: string, messageId: string, usag
 
 describe('CLI DeepSeek v4 Claude pricing regression', () => {
   it('prices DeepSeek v4 Claude sessions even when the runtime LiteLLM cache lacks those models', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'codeburn-deepseek-v4-cli-'))
+    const home = await mkdtemp(join(tmpdir(), 'quantum-watcher-deepseek-v4-cli-'))
 
     try {
       const projectDir = join(home, '.claude', 'projects', 'deepseek-v4-validation')
-      const cacheDir = join(home, '.cache', 'codeburn')
+      const cacheDir = join(home, '.cache', 'quantum-watcher')
       await mkdir(projectDir, { recursive: true })
       await mkdir(cacheDir, { recursive: true })
 

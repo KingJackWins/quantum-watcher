@@ -28,7 +28,7 @@ describe('plan presets', () => {
 
 describe('plan config persistence', () => {
   it('round-trips per-provider plans and clears one provider at a time', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'codeburn-plan-test-'))
+    const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-test-'))
     const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 
@@ -84,7 +84,7 @@ describe('plan config persistence', () => {
   })
 
   it('reads legacy single-plan config as a provider-keyed plan map', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'codeburn-plan-test-'))
+    const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-test-'))
     const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 
@@ -117,7 +117,7 @@ describe('plan config persistence', () => {
   })
 
   it('drops a hand-edited all plan when provider-specific plans are present', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'codeburn-plan-test-'))
+    const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-test-'))
     const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 
@@ -154,7 +154,7 @@ describe('plan config persistence', () => {
   })
 
   it('does not allow an all-provider plan to overlap provider-specific plans', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'codeburn-plan-test-'))
+    const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-test-'))
     const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 

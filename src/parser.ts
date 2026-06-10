@@ -1,7 +1,8 @@
 import { lstat, readFile, readdir, stat } from 'fs/promises'
 import { basename, dirname, join, resolve, sep } from 'path'
 import { readSessionLines } from './fs-utils.js'
-import { calculateCost, getShortModelName } from './models.js'
+import { calculateCost, calculateLocalModelSavings, getShortModelName, isProxiedPath, getProxyPathsConfigHash } from './models.js'
+import { normalizeContentBlocks } from './content-utils.js'
 import { discoverAllSessions, getProvider } from './providers/index.js'
 import { flushCodexCache } from './codex-cache.js'
 import { antigravityCascadeIdFromPath, flushAntigravityCache, shouldReparseAntigravitySource } from './providers/antigravity.js'
@@ -1018,15 +1019,19 @@ function getMessageId(entry: JournalEntry): string | null {
   return msg?.id ?? null
 }
 
-function positiveNumber(n: number | undefined): number {
-  return n !== undefined && Number.isFinite(n) && n > 0 ? n : 0
+export function safeNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+}
+
+export function isPositiveNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 function extractClaudeCacheCreation(usage: AssistantMessageContent['usage']): { totalTokens: number; oneHourTokens: number } {
-  const legacyTotal = positiveNumber(usage.cache_creation_input_tokens)
+  const legacyTotal = safeNumber(usage.cache_creation_input_tokens)
   const cacheCreation = usage.cache_creation
-  const fiveMinuteTokens = positiveNumber(cacheCreation?.ephemeral_5m_input_tokens)
-  const oneHourTokens = positiveNumber(cacheCreation?.ephemeral_1h_input_tokens)
+  const fiveMinuteTokens = safeNumber(cacheCreation?.ephemeral_5m_input_tokens)
+  const oneHourTokens = safeNumber(cacheCreation?.ephemeral_1h_input_tokens)
   const splitTotal = fiveMinuteTokens + oneHourTokens
 
   if (splitTotal === 0) return { totalTokens: legacyTotal, oneHourTokens: 0 }
@@ -1037,6 +1042,33 @@ function extractClaudeCacheCreation(usage: AssistantMessageContent['usage']): { 
   return {
     totalTokens,
     oneHourTokens: Math.min(oneHourTokens, totalTokens),
+  }
+}
+
+/// Apply local-model savings accounting to a call. If the raw model name is
+/// mapped via `quantum-watcher model-savings`, the call's actual cost is forced
+/// to $0 and the hypothetical baseline cost is recorded as `savingsUSD`.
+/// Returns the input unchanged when no mapping is configured for the
+/// model — keeps the hot path branch-free for the common paid-only case.
+function applyLocalModelSavings(call: ParsedApiCall): ParsedApiCall {
+  const u = call.usage
+  const savings = calculateLocalModelSavings(
+    call.model,
+    u.inputTokens,
+    u.outputTokens,
+    u.cacheCreationInputTokens,
+    u.cacheReadInputTokens,
+    u.webSearchRequests,
+    call.speed,
+    call.cacheCreationOneHourTokens ?? 0,
+  )
+  if (!savings) return call
+  return {
+    ...call,
+    costUSD: 0,
+    savingsUSD: savings.savingsUSD,
+    savingsBaselineModel: savings.baselineModel,
+    isLocalSavings: true,
   }
 }
 
@@ -1057,9 +1089,13 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
     webSearchRequests: usage.server_tool_use?.web_search_requests ?? 0,
   }
 
-  const tools = extractToolNames(msg.content ?? [])
-  const skills = extractSkillNames(msg.content ?? [])
-  const subagentTypes = extractSubagentTypes(msg.content ?? [])
+  // Defensive: a message whose `content` is a string (not an array of blocks)
+  // would crash the helpers below; normalize so one bad record can't abort the
+  // whole backfill (issue #441).
+  const contentBlocks = normalizeContentBlocks(msg.content)
+  const tools = extractToolNames(contentBlocks)
+  const skills = extractSkillNames(contentBlocks)
+  const subagentTypes = extractSubagentTypes(contentBlocks)
   const costUSD = calculateCost(
     msg.model,
     tokens.inputTokens,
@@ -1071,9 +1107,9 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
     cacheCreation.oneHourTokens,
   )
 
-  const bashCmds = extractBashCommandsFromContent(msg.content ?? [])
+  const bashCmds = extractBashCommandsFromContent(contentBlocks)
 
-  const toolSeq: ToolCall[][] = (msg.content ?? [])
+  const toolSeq: ToolCall[][] = contentBlocks
     .filter((b): b is ToolUseBlock => b.type === 'tool_use')
     .map(b => {
       const call: ToolCall = { tool: b.name }
@@ -1083,7 +1119,7 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
       return [call]
     })
 
-  return {
+  return applyLocalModelSavings({
     provider: 'claude',
     model: msg.model,
     usage: tokens,
@@ -1100,7 +1136,7 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
     deduplicationKey: msg.id ?? `claude:${entry.timestamp}`,
     cacheCreationOneHourTokens: cacheCreation.oneHourTokens || undefined,
     toolSequence: toolSeq.length > 0 ? toolSeq : undefined,
-  }
+  })
 }
 
 function dedupeStreamingMessageIds(entries: JournalEntry[]): JournalEntry[] {
@@ -1239,6 +1275,7 @@ function buildSessionSummary(
   const subagentBreakdown: SessionSummary['subagentBreakdown'] = Object.create(null)
 
   let totalCost = 0
+  let totalSavings = 0
   let totalInput = 0
   let totalOutput = 0
   let totalCacheRead = 0
@@ -1249,12 +1286,14 @@ function buildSessionSummary(
 
   for (const turn of turns) {
     const turnCost = turn.assistantCalls.reduce((s, c) => s + c.costUSD, 0)
+    const turnSavings = turn.assistantCalls.reduce((s, c) => s + (c.savingsUSD ?? 0), 0)
 
     if (!categoryBreakdown[turn.category]) {
-      categoryBreakdown[turn.category] = { turns: 0, costUSD: 0, retries: 0, editTurns: 0, oneShotTurns: 0 }
+      categoryBreakdown[turn.category] = { turns: 0, costUSD: 0, savingsUSD: 0, retries: 0, editTurns: 0, oneShotTurns: 0 }
     }
     categoryBreakdown[turn.category].turns++
     categoryBreakdown[turn.category].costUSD += turnCost
+    categoryBreakdown[turn.category].savingsUSD += turnSavings
     if (turn.hasEdits) {
       categoryBreakdown[turn.category].editTurns++
       categoryBreakdown[turn.category].retries += turn.retries
@@ -1264,10 +1303,11 @@ function buildSessionSummary(
     if (turn.subCategory) {
       const skillKey = turn.subCategory
       if (!skillBreakdown[skillKey]) {
-        skillBreakdown[skillKey] = { turns: 0, costUSD: 0, editTurns: 0, oneShotTurns: 0 }
+        skillBreakdown[skillKey] = { turns: 0, costUSD: 0, savingsUSD: 0, editTurns: 0, oneShotTurns: 0 }
       }
       skillBreakdown[skillKey].turns++
       skillBreakdown[skillKey].costUSD += turnCost
+      skillBreakdown[skillKey].savingsUSD += turnSavings
       if (turn.hasEdits) {
         skillBreakdown[skillKey].editTurns++
         if (turn.retries === 0) skillBreakdown[skillKey].oneShotTurns++
@@ -1275,7 +1315,9 @@ function buildSessionSummary(
     }
 
     for (const call of turn.assistantCalls) {
+      const callSavings = call.savingsUSD ?? 0
       totalCost += call.costUSD
+      totalSavings += callSavings
       totalInput += call.usage.inputTokens
       totalOutput += call.usage.outputTokens
       totalCacheRead += call.usage.cacheReadInputTokens
@@ -1287,11 +1329,13 @@ function buildSessionSummary(
         modelBreakdown[modelKey] = {
           calls: 0,
           costUSD: 0,
+          savingsUSD: 0,
           tokens: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0, webSearchRequests: 0 },
         }
       }
       modelBreakdown[modelKey].calls++
       modelBreakdown[modelKey].costUSD += call.costUSD
+      modelBreakdown[modelKey].savingsUSD += callSavings
       modelBreakdown[modelKey].tokens.inputTokens += call.usage.inputTokens
       modelBreakdown[modelKey].tokens.outputTokens += call.usage.outputTokens
       modelBreakdown[modelKey].tokens.cacheReadInputTokens += call.usage.cacheReadInputTokens
@@ -1311,9 +1355,10 @@ function buildSessionSummary(
         bashBreakdown[cmd].calls++
       }
       for (const sat of call.subagentTypes) {
-        subagentBreakdown[sat] = subagentBreakdown[sat] ?? { calls: 0, costUSD: 0 }
+        subagentBreakdown[sat] = subagentBreakdown[sat] ?? { calls: 0, costUSD: 0, savingsUSD: 0 }
         subagentBreakdown[sat].calls++
         subagentBreakdown[sat].costUSD += call.costUSD
+        subagentBreakdown[sat].savingsUSD += callSavings
       }
 
       if (!firstTs || call.timestamp < firstTs) firstTs = call.timestamp
@@ -1327,6 +1372,7 @@ function buildSessionSummary(
     firstTimestamp: firstTs || turns[0]?.timestamp || '',
     lastTimestamp: lastTs || turns[turns.length - 1]?.timestamp || '',
     totalCostUSD: totalCost,
+    totalSavingsUSD: totalSavings,
     totalInputTokens: totalInput,
     totalOutputTokens: totalOutput,
     totalCacheReadTokens: totalCacheRead,
@@ -1417,26 +1463,45 @@ async function parseSessionFile(
   }
 }
 
-async function collectJsonlFiles(dirPath: string): Promise<string[]> {
+// Recursively collect every `.jsonl` under `dir`. Subagent transcripts live in
+// `subagents/`, and workflow/ultracode runs nest a further level deep
+// (`subagents/workflows/<wf>/agent-*.jsonl`); a flat scan misses those, so their
+// usage went uncounted whenever the workflow feature was on. (#470)
+async function collectJsonlInto(dir: string, out: Set<string>): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  for (const e of entries) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) await collectJsonlInto(p, out)
+    else if (e.name.endsWith('.jsonl')) out.add(p)
+  }
+}
+
+export async function collectJsonlFiles(dirPath: string): Promise<string[]> {
   const files = await readdir(dirPath).catch(() => [])
   const jsonlFiles = new Set(files.filter(f => f.endsWith('.jsonl')).map(f => join(dirPath, f)))
 
-  const directSubagentsPath = join(dirPath, 'subagents')
-  const directSubFiles = await readdir(directSubagentsPath).catch(() => [])
-  for (const sf of directSubFiles) {
-    if (sf.endsWith('.jsonl')) jsonlFiles.add(join(directSubagentsPath, sf))
-  }
-
+  await collectJsonlInto(join(dirPath, 'subagents'), jsonlFiles)
   for (const entry of files) {
     if (entry.endsWith('.jsonl')) continue
-    const subagentsPath = join(dirPath, entry, 'subagents')
-    const subFiles = await readdir(subagentsPath).catch(() => [])
-    for (const sf of subFiles) {
-      if (sf.endsWith('.jsonl')) jsonlFiles.add(join(subagentsPath, sf))
-    }
+    await collectJsonlInto(join(dirPath, entry, 'subagents'), jsonlFiles)
   }
 
   return [...jsonlFiles]
+}
+
+// Claude Code subagent transcripts (`subagents/.../agent-*.jsonl`) have a sibling
+// `.meta.json` carrying the `agentType` (e.g. `workflow-subagent`, `Explore`).
+// Returns undefined for ordinary session files, which carry no agent type.
+export async function readAgentType(filePath: string): Promise<string | undefined> {
+  if (!/[\\/]subagents[\\/]/.test(filePath)) return undefined
+  const metaPath = filePath.replace(/\.jsonl$/, '.meta.json')
+  try {
+    const t = (JSON.parse(await readFile(metaPath, 'utf8')) as { agentType?: unknown }).agentType
+    if (typeof t === 'string' && t.trim()) return t.trim().slice(0, 100)
+  } catch { /* missing or unreadable meta */ }
+  // Workflow agents always live under `subagents/workflows/`, so fall back to that
+  // even when the meta sidecar is absent.
+  return /[\\/]subagents[\\/]workflows[\\/]/.test(filePath) ? 'workflow-subagent' : undefined
 }
 
 async function scanProjectDirs(
@@ -1480,22 +1545,34 @@ async function scanProjectDirs(
   for (const { filePath, info } of changedFiles) {
     delete section.files[filePath]
 
-    const tracker = { lastCompleteLineOffset: 0 }
-    const entries = await parseClaudeEntries(filePath, tracker)
-    if (!entries) continue
+    try {
+      const tracker = { lastCompleteLineOffset: 0 }
+      const entries = await parseClaudeEntries(filePath, tracker)
+      if (!entries) continue
 
-    const turns = groupIntoTurns(dedupeStreamingMessageIds(entries), seenMsgIds)
-    const cwd = extractCanonicalCwd(entries)
-    const canonical = (cwd && !isCoworkSession(cwd, filePath)) ? await resolveCanonicalProjectPath(cwd) : undefined
-    section.files[filePath] = {
-      fingerprint: info.fp,
-      lastCompleteLineOffset: tracker.lastCompleteLineOffset,
-      canonicalCwd: canonical?.path,
-      canonicalProjectName: canonical?.isWorktree ? projectNameFromPath(canonical.path, info.dirName) : undefined,
-      mcpInventory: extractMcpInventory(entries),
-      turns: turns.map(parsedTurnToCachedTurn),
+      const turns = groupIntoTurns(dedupeStreamingMessageIds(entries), seenMsgIds)
+      const cwd = extractCanonicalCwd(entries)
+      const canonical = (cwd && !isCoworkSession(cwd, filePath)) ? await resolveCanonicalProjectPath(cwd) : undefined
+      section.files[filePath] = {
+        fingerprint: info.fp,
+        lastCompleteLineOffset: tracker.lastCompleteLineOffset,
+        canonicalCwd: canonical?.path,
+        canonicalProjectName: canonical?.isWorktree ? projectNameFromPath(canonical.path, info.dirName) : undefined,
+        mcpInventory: extractMcpInventory(entries),
+        turns: turns.map(parsedTurnToCachedTurn),
+        agentType: await readAgentType(filePath),
+      }
+      ;(diskCache as { _dirty?: boolean })._dirty = true
+    } catch (err) {
+      // A single malformed Claude session file must not abort the whole run — that
+      // would empty the daily-cache backfill and wipe the trend/history (issue #441,
+      // same isolation the provider path already has). Record a failure marker keyed
+      // by the current fingerprint so it isn't re-read and re-thrown every run; it
+      // re-parses only if the file changes.
+      section.files[filePath] = { fingerprint: info.fp, mcpInventory: [], turns: [], failed: true }
+      ;(diskCache as { _dirty?: boolean })._dirty = true
+      warnProviderParseFailure('claude', filePath, err)
     }
-    ;(diskCache as { _dirty?: boolean })._dirty = true
   }
 
   if (dirs.length > 0) {
@@ -1537,6 +1614,7 @@ async function scanProjectDirs(
     const projectName = cachedFile.canonicalProjectName ?? dirName
     const mcpInv = cachedFile.mcpInventory.length > 0 ? cachedFile.mcpInventory : undefined
     const session = buildSessionSummary(sessionId, projectName, classifiedTurns, mcpInv)
+    session.agentType = cachedFile.agentType
 
     if (session.apiCalls > 0) {
       const projectKey = cachedFile.canonicalCwd
@@ -1571,16 +1649,30 @@ async function scanProjectDirs(
 
   const projects: ProjectSummary[] = []
   for (const { project, projectPath, sessions } of projectMap.values()) {
-    projects.push({
-      project,
-      projectPath,
-      sessions,
-      totalCostUSD: sessions.reduce((s, sess) => s + sess.totalCostUSD, 0),
-      totalApiCalls: sessions.reduce((s, sess) => s + sess.apiCalls, 0),
-    })
+    projects.push(summarizeProject(project, projectPath, sessions))
   }
 
   return projects
+}
+
+/// Build a ProjectSummary from its sessions, rolling up cost/savings/calls and
+/// deriving the proxy attribution. This is the single place proxy matching
+/// happens: a project whose canonical path is under a configured `proxyPaths`
+/// prefix keeps its full API-rate `totalCostUSD` but records that amount as
+/// `totalProxiedCostUSD` (subscription-covered). All ProjectSummary callers go
+/// through here so the rule stays consistent across the fresh, cached, and
+/// date/day-filtered paths.
+function summarizeProject(project: string, projectPath: string, sessions: SessionSummary[]): ProjectSummary {
+  const totalCostUSD = sessions.reduce((s, sess) => s + sess.totalCostUSD, 0)
+  return {
+    project,
+    projectPath,
+    sessions,
+    totalCostUSD,
+    totalSavingsUSD: sessions.reduce((s, sess) => s + sess.totalSavingsUSD, 0),
+    totalApiCalls: sessions.reduce((s, sess) => s + sess.apiCalls, 0),
+    totalProxiedCostUSD: isProxiedPath(projectPath) ? totalCostUSD : 0,
+  }
 }
 
 function providerCallToTurn(call: ParsedProviderCall): ParsedTurn {
@@ -1595,7 +1687,7 @@ function providerCallToTurn(call: ParsedProviderCall): ParsedTurn {
     webSearchRequests: call.webSearchRequests,
   }
 
-  const apiCall: ParsedApiCall = {
+  const apiCall: ParsedApiCall = applyLocalModelSavings({
     provider: call.provider,
     model: call.model,
     usage,
@@ -1610,7 +1702,7 @@ function providerCallToTurn(call: ParsedProviderCall): ParsedTurn {
     timestamp: call.timestamp,
     bashCommands: call.bashCommands,
     deduplicationKey: call.deduplicationKey,
-  }
+  })
 
   return {
     userMessage: call.userMessage,
@@ -1636,7 +1728,7 @@ function providerCallToCachedCall(call: ParsedProviderCall): CachedCall {
       webSearchRequests: call.webSearchRequests,
       cacheCreationOneHourTokens: 0,
     },
-    costUSD: (call.provider === 'mistral-vibe' || call.provider === 'antigravity') ? call.costUSD : undefined,
+    costUSD: (call.provider === 'mistral-vibe' || call.provider === 'antigravity' || call.provider === 'devin' || call.provider === 'vercel-gateway') ? call.costUSD : undefined,
     speed: call.speed,
     timestamp: call.timestamp,
     tools: call.tools,
@@ -1735,7 +1827,7 @@ function cachedCallToApiCall(call: CachedCall): ParsedApiCall {
     u.cacheCreationInputTokens, u.cacheReadInputTokens,
     u.webSearchRequests, call.speed, u.cacheCreationOneHourTokens,
   )
-  return {
+  return applyLocalModelSavings({
     provider: call.provider,
     model: call.model,
     usage: {
@@ -1760,7 +1852,7 @@ function cachedCallToApiCall(call: CachedCall): ParsedApiCall {
     deduplicationKey: call.deduplicationKey,
     cacheCreationOneHourTokens: u.cacheCreationOneHourTokens || undefined,
     toolSequence: call.toolSequence,
-  }
+  })
 }
 
 function cachedTurnToClassified(turn: CachedTurn): ClassifiedTurn {
@@ -1807,6 +1899,11 @@ function cachedFileNeedsProviderReparse(providerName: string, sourcePath: string
   // A 0-turn cache entry may just mean the server was unavailable last run.
   if (providerName === 'antigravity') return shouldReparseAntigravitySource(sourcePath, cached.turns.length)
 
+  // Devin transcript usage is enriched from sessions.db. The cache fingerprint
+  // only tracks the transcript JSON, so reparse to pick up DB-side project,
+  // title, model, and timestamp changes.
+  if (providerName === 'devin') return true
+
   if (providerName !== 'gemini') return false
 
   return cached.turns.some(turn =>
@@ -1825,6 +1922,26 @@ function warnProviderReadFailureOnce(providerName: string, err: unknown): void {
       `quantum-watcher: skipped ${providerName} data because its SQLite database is temporarily locked; will retry on the next refresh.\n`
     )
   }
+}
+
+// Warn per offending file (so a systemic break surfaces more than one path),
+// but cap per provider per run to avoid a flood. Cached failure markers mean a
+// given broken file is only re-encountered when it changes, so this stays quiet
+// across refreshes.
+const parseFailureCounts = new Map<string, number>()
+const PARSE_FAILURE_WARN_CAP = 5
+
+function warnProviderParseFailure(providerName: string, sourcePath: string, err: unknown): void {
+  const n = (parseFailureCounts.get(providerName) ?? 0) + 1
+  parseFailureCounts.set(providerName, n)
+  if (n > PARSE_FAILURE_WARN_CAP) return
+  const msg = err instanceof Error ? err.message : String(err)
+  const tail = n === PARSE_FAILURE_WARN_CAP
+    ? ` (further ${providerName} parse failures this run are suppressed)`
+    : ''
+  process.stderr.write(
+    `quantum-watcher: skipped ${providerName} session that failed to parse: ${sourcePath} (${msg})${tail}\n`
+  )
 }
 
 async function parseProviderSources(
@@ -1846,12 +1963,25 @@ async function parseProviderSources(
 
   for (const source of sources) {
     allDiscoveredFiles.add(source.path)
+
+    // Network providers (e.g. Vercel AI Gateway) have no on-disk file — their data
+    // comes from a live API fetch in createSessionParser. There's nothing to
+    // fingerprint or incrementally cache, so re-fetch every run with a synthetic
+    // fingerprint (mtime=now so the date-range filter below never excludes it).
+    if (provider.network) {
+      changedSources.push({ source, fp: { dev: 0, ino: 0, mtimeMs: Date.now(), sizeBytes: 0 } })
+      continue
+    }
+
     const fp = await fingerprintFile(source.path)
     if (!fp) continue
 
     const cached = section.files[source.path]
     const action = reconcileFile(fp, cached)
-    if (action.action === 'unchanged' && cached && !cachedFileNeedsProviderReparse(providerName, source.path, cached)) {
+    // A cached parse failure at this same fingerprint stays skipped — don't
+    // re-read a file that already threw and hasn't changed. It re-parses only
+    // when the file changes (then `reconcileFile` reports non-'unchanged').
+    if (action.action === 'unchanged' && cached && (cached.failed || !cachedFileNeedsProviderReparse(providerName, source.path, cached))) {
       unchangedSources.push({ source, cached })
     } else {
       changedSources.push({ source, fp })
@@ -1883,6 +2013,7 @@ async function parseProviderSources(
       const parser = provider.createSessionParser(
         { path: source.path, project: source.project, provider: providerName },
         parserDedup,
+        dateRange,
       )
 
       try {
@@ -1900,7 +2031,16 @@ async function parseProviderSources(
           warnProviderReadFailureOnce(providerName, err)
           continue
         }
-        throw err
+        // A single malformed session file must not abort the entire run — that
+        // would silently empty the daily-cache backfill and wipe the trend /
+        // history (issue #441). Record a negative-result marker keyed by the
+        // current fingerprint so we don't re-read + re-throw this unchanged file
+        // on every refresh; it re-parses only if it changes. Empty turns => no
+        // usage contributed.
+        section.files[source.path] = { fingerprint: fp, mcpInventory: [], turns: [], failed: true }
+        ;(diskCache as { _dirty?: boolean })._dirty = true
+        warnProviderParseFailure(providerName, source.path, err)
+        continue
       }
     }
   } finally {
@@ -1974,13 +2114,7 @@ async function parseProviderSources(
 
   const projects: ProjectSummary[] = []
   for (const [dirName, { projectPath, sessions }] of projectMap) {
-    projects.push({
-      project: dirName,
-      projectPath: projectPath ?? unsanitizePath(dirName),
-      sessions,
-      totalCostUSD: sessions.reduce((s, sess) => s + sess.totalCostUSD, 0),
-      totalApiCalls: sessions.reduce((s, sess) => s + sess.apiCalls, 0),
-    })
+    projects.push(summarizeProject(dirName, projectPath ?? unsanitizePath(dirName), sessions))
   }
 
   return projects
@@ -1996,7 +2130,9 @@ function cacheKey(dateRange?: DateRange, providerFilter?: string): string {
   // process (menubar / GNOME extension / test workers) does not return
   // stale data keyed under a previous configuration.
   const claudeEnv = (process.env['CLAUDE_CONFIG_DIRS'] ?? '') + '|' + (process.env['CLAUDE_CONFIG_DIR'] ?? '')
-  return `${s}:${providerFilter ?? 'all'}:${claudeEnv}`
+  // Proxy attribution (totalProxiedCostUSD) is computed live from proxyPaths and
+  // then cached, so the key must change when that config changes.
+  return `${s}:${providerFilter ?? 'all'}:${claudeEnv}:${getProxyPathsConfigHash()}`
 }
 
 export function clearSessionCache(): void {
@@ -2072,13 +2208,7 @@ export function filterProjectsByDays(projects: ProjectSummary[], days: Set<strin
       sessions.push(buildSessionSummary(session.sessionId, session.project, turns, session.mcpInventory))
     }
     if (sessions.length === 0) continue
-    filtered.push({
-      project: project.project,
-      projectPath: project.projectPath,
-      sessions,
-      totalCostUSD: sessions.reduce((s, sess) => s + sess.totalCostUSD, 0),
-      totalApiCalls: sessions.reduce((s, sess) => s + sess.apiCalls, 0),
-    })
+    filtered.push(summarizeProject(project.project, project.projectPath, sessions))
   }
   return filtered.sort((a, b) => b.totalCostUSD - a.totalCostUSD)
 }
@@ -2093,13 +2223,7 @@ export function filterProjectsByDateRange(projects: ProjectSummary[], dateRange:
       sessions.push(buildSessionSummary(session.sessionId, session.project, turns, session.mcpInventory))
     }
     if (sessions.length === 0) continue
-    filtered.push({
-      project: project.project,
-      projectPath: project.projectPath,
-      sessions,
-      totalCostUSD: sessions.reduce((s, sess) => s + sess.totalCostUSD, 0),
-      totalApiCalls: sessions.reduce((s, sess) => s + sess.apiCalls, 0),
-    })
+    filtered.push(summarizeProject(project.project, project.projectPath, sessions))
   }
   return filtered.sort((a, b) => b.totalCostUSD - a.totalCostUSD)
 }
@@ -2177,6 +2301,17 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
     } else {
       mergedMap.set(key, { ...p })
     }
+  }
+
+  // Re-derive proxy attribution on the merged total: the merge above sums
+  // totalCostUSD across providers that share a canonical path but never
+  // recomputed totalProxiedCostUSD, so a merged project (e.g. the same repo
+  // used with Claude Code + Codex) would otherwise carry the proxied amount of
+  // only the first-seen provider. The merge key is the canonical path, so both
+  // sides share the same proxied status — keying off the surviving projectPath
+  // and the final cost keeps the project-level all-or-nothing rule intact.
+  for (const p of mergedMap.values()) {
+    p.totalProxiedCostUSD = isProxiedPath(p.projectPath) ? p.totalCostUSD : 0
   }
 
   const result = Array.from(mergedMap.values()).sort((a, b) => b.totalCostUSD - a.totalCostUSD)

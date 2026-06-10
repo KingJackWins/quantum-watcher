@@ -47,9 +47,9 @@ function assistantLine(sessionId: string, timestamp: string, messageId: string):
   })
 }
 
-describe('codeburn status --format menubar-json', () => {
+describe('quantum-watcher status --format menubar-json', () => {
   it('returns valid MenubarPayload with expected top-level fields', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'codeburn-menubar-'))
+    const home = await mkdtemp(join(tmpdir(), 'quantum-watcher-menubar-'))
 
     try {
       const projectDir = join(home, '.claude', 'projects', 'myapp')
@@ -107,7 +107,7 @@ describe('codeburn status --format menubar-json', () => {
   })
 
   it('filters menubar payloads to a selected review day with --day', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'codeburn-menubar-day-'))
+    const home = await mkdtemp(join(tmpdir(), 'quantum-watcher-menubar-day-'))
 
     try {
       const projectDir = join(home, '.claude', 'projects', 'myapp')

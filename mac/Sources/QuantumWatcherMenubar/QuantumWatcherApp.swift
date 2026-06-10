@@ -49,7 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var claudeQuotaRefreshTask: Task<Bool, Never>?
     private var codexQuotaRefreshTask: Task<Bool, Never>?
     private var refreshLoopHeartbeatAt: Date = .distantPast
-    private var lastLaunchAgentHeartbeatAt: Date = .distantPast
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Set accessory policy before the app's focus chain forms. On macOS Tahoe
@@ -75,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         ProcessInfo.processInfo.disableSuddenTermination()
         backgroundActivity = ProcessInfo.processInfo.beginActivity(
             options: [.automaticTerminationDisabled, .suddenTerminationDisabled],
-            reason: "Quantum Watcher menubar background refresh"
+            reason: "QuantumWatcher menubar background refresh"
         )
 
         restorePersistedCurrency()
@@ -84,8 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         observeStore()
         startRefreshLoop()
         setupWakeObservers()
-        setupDistributedNotificationListener()
-        installLaunchAgentIfNeeded()
+        removeLegacyRefreshAgent()
         registerLoginItemIfNeeded()
         observeSubscriptionDisconnect()
         Task { await updateChecker.checkIfNeeded() }
@@ -131,36 +129,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func setupDistributedNotificationListener() {
-        DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.quantumwatcher.refresh"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.handleLaunchAgentHeartbeat()
-            }
-        }
-    }
-
-    private func handleLaunchAgentHeartbeat() {
-        let now = Date()
-        guard now.timeIntervalSince(lastLaunchAgentHeartbeatAt) >= refreshRateLimitSeconds else { return }
-        lastLaunchAgentHeartbeatAt = now
-        let loopAge = now.timeIntervalSince(refreshLoopHeartbeatAt)
-        guard refreshTimer == nil || loopAge > refreshLoopWatchdogSeconds else {
-            _ = store.clearStaleLoadingIfNeeded()
-            _ = clearStaleForceRefreshIfNeeded(now: now)
-            _ = clearStaleStatusPayloadRefreshIfNeeded(now: now)
-            return
-        }
-        if refreshTimer != nil {
-            NSLog("QuantumWatcher: refresh loop stale for %ds after launch agent - restarting", Int(loopAge))
-        }
-        startRefreshLoop(forceQuotaOnStart: false)
-    }
-
     private func prepareRefreshPipelineForSleep() {
+        // Leave the timer running: the kernel pauses it during sleep, and tearing
+        // it down stranded the loop whenever a wake notification was missed.
         forceRefreshTask?.cancel()
         forceRefreshTask = nil
         forceRefreshStartedAt = nil
@@ -173,8 +144,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusPayloadRefreshStartedAt = nil
         statusPayloadRefreshGeneration &+= 1
         store.resetLoadingState()
-        stopRefreshTimer()
-        refreshLoopHeartbeatAt = .distantPast
         lastRefreshTime = .distantPast
     }
 
@@ -207,60 +176,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func installLaunchAgentIfNeeded() {
+    // Earlier builds installed a launchd job that re-fetched data out of process.
+    // macOS attributes a launchd-spawned binary differently from the LaunchServices
+    // app, so it triggered its own "access data from other apps" prompt on every
+    // run. Remove any such leftover job on upgrade; the in-app loop is the source of
+    // truth and writes the badge backstop file itself.
+    private func removeLegacyRefreshAgent() {
         let fm = FileManager.default
-        let agentName = "com.quantumwatcher.refresh.plist"
         let home = fm.homeDirectoryForCurrentUser.path
-        let destPath = "\(home)/Library/LaunchAgents/\(agentName)"
+        let destPath = "\(home)/Library/LaunchAgents/com.quantum-watcher.refresh.plist"
+        guard fm.fileExists(atPath: destPath) else { return }
 
-        let plist = """
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.quantumwatcher.refresh</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/osascript</string>
-        <string>-l</string>
-        <string>JavaScript</string>
-        <string>-e</string>
-        <string>ObjC.import("Foundation"); $.NSDistributedNotificationCenter.defaultCenter.postNotificationNameObjectUserInfoDeliverImmediately("com.quantumwatcher.refresh", $(), $(), true)</string>
-    </array>
-    <key>StartInterval</key>
-    <integer>30</integer>
-    <key>RunAtLoad</key>
-    <true/>
-</dict>
-</plist>
-"""
-
-        do {
-            let existing = try? String(contentsOfFile: destPath, encoding: .utf8)
-            if existing == plist { return }
-
-            try fm.createDirectory(atPath: "\(home)/Library/LaunchAgents", withIntermediateDirectories: true)
-            try plist.write(toFile: destPath, atomically: true, encoding: .utf8)
-
-            let unload = Process()
-            unload.launchPath = "/bin/launchctl"
-            unload.arguments = ["unload", destPath]
-            try? unload.run()
-            unload.waitUntilExit()
-
-            let load = Process()
-            load.launchPath = "/bin/launchctl"
-            load.arguments = ["load", destPath]
-            try load.run()
-            load.waitUntilExit()
-        } catch {
-            NSLog("QuantumWatcher: LaunchAgent setup failed: \(error)")
-        }
+        let unload = Process()
+        unload.launchPath = "/bin/launchctl"
+        unload.arguments = ["unload", destPath]
+        try? unload.run()
+        unload.waitUntilExit()
+        try? fm.removeItem(atPath: destPath)
     }
 
     private func registerLoginItemIfNeeded() {
-        let key = "quantumwatcher.loginItemRegistered"
+        let key = "quantum-watcher.loginItemRegistered"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
 
         let appPath = Bundle.main.bundlePath
@@ -508,15 +444,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func refreshPayloadForPopoverOpen() {
-        guard store.needsInteractivePayloadRefresh else { return }
-        let shouldResetPipeline = store.shouldResetInteractiveRefreshPipeline
-        if shouldResetPipeline, let age = store.staleInteractivePayloadAgeSeconds {
-            NSLog("QuantumWatcher: popover opened with %ds stale payload cache - resetting refresh pipeline", age)
+        // A user viewing the popover is ground truth and must always recover.
+        // Unconditionally ensure the loop is alive, then clear the current
+        // key's stuck loading / in-flight / generation bookkeeping and force a
+        // fresh fetch — even if the cache looks "not stale yet". This is the
+        // guaranteed one-round-trip recovery path.
+        if refreshTimer == nil {
+            startRefreshLoop(forceQuotaOnStart: false)
         }
-        recoverRefreshPipelineAfterInterruption(
-            resetLoading: shouldResetPipeline,
-            reason: "popover open"
-        )
+        if store.shouldResetInteractiveRefreshPipeline,
+           let age = store.staleInteractivePayloadAgeSeconds {
+            NSLog("QuantumWatcher: popover opened with %ds stale payload cache - hard recovery", age)
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.store.recoverFromStuckLoading()
+            self.refreshStatusButton()
+        }
     }
 
     private func stopRefreshTimer() {
@@ -743,7 +687,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         let menubarPeriod = store.menubarPeriod
-        let menubarPayload = store.menubarPayload
+        let menubarPayload = badgePayload()
         let hasPayload = menubarPayload != nil
         let compact = isCompact
 
@@ -777,6 +721,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         button.attributedTitle = composed
         button.toolTip = "Quantum Watcher \(menubarPeriod.menubarMetricLabel)"
+
+        persistBadgeStatusFile()
+    }
+
+    private var lastWrittenBadgeGenerated: String?
+
+    // Mirror the freshest in-memory payload to disk so the badge survives an app
+    // restart. Skips redundant writes by tracking the last payload's `generated`
+    // stamp. This is the only writer now that the launchd fetcher is gone.
+    private func persistBadgeStatusFile() {
+        guard let payload = store.menubarPayload else { return }
+        guard payload.generated != lastWrittenBadgeGenerated else { return }
+        do {
+            try MenubarStatusCache.standard().writeStatus(payload)
+            lastWrittenBadgeGenerated = payload.generated
+        } catch {
+            NSLog("QuantumWatcher: failed to write badge status file: \(error)")
+        }
+    }
+
+    // Badge falls back to the on-disk status file (written by a prior app run)
+    // when the in-app loop has no payload yet; in-memory wins when it's fresher.
+    // The 10-min bound discards a file too stale to trust.
+    private func badgePayload() -> MenubarPayload? {
+        let inMemory = store.menubarPayload
+        let inMemoryAge = store.menubarPayloadAgeSeconds.map(TimeInterval.init)
+        guard let fileRead = MenubarStatusCache.standard().readBadgePayload(maxAgeSeconds: 600) else {
+            return inMemory
+        }
+        if inMemory == nil { return fileRead.payload }
+        if let age = inMemoryAge, fileRead.ageSeconds < age { return fileRead.payload }
+        return inMemory
     }
 
     private func formatTokensMenubar(_ n: Double) -> String {

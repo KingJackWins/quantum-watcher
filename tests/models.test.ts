@@ -54,6 +54,29 @@ describe('getShortModelName', () => {
   it('maps claude-opus-4-6 with date suffix', () => {
     expect(getShortModelName('claude-opus-4-6-20260205')).toBe('Opus 4.6')
   })
+
+  // Regression for #420: claude-opus-4-8 must get its own line, not collapse
+  // into the generic "Opus 4" bucket via the shorter claude-opus-4 prefix.
+  it('maps claude-opus-4-8 to its own line (not Opus 4)', () => {
+    expect(getShortModelName('claude-opus-4-8')).toBe('Opus 4.8')
+  })
+
+  // A future version is derived from the id with no hand-maintained entry.
+  it('derives an unreleased claude version with no SHORT_NAMES entry', () => {
+    expect(getShortModelName('claude-sonnet-5-2')).toBe('Sonnet 5.2')
+    expect(getShortModelName('claude-haiku-5')).toBe('Haiku 5')
+    expect(getShortModelName('claude-opus-9-9-20300101')).toBe('Opus 9.9')
+  })
+})
+
+describe('claude-fable-5 pricing + name', () => {
+  it('prices at $10/M input, $50/M output via models.dev/OpenRouter gap-fill', () => {
+    expect(calculateCost('claude-fable-5', 1_000_000, 0, 0, 0, 0)).toBeCloseTo(10, 6)
+    expect(calculateCost('claude-fable-5', 0, 1_000_000, 0, 0, 0)).toBeCloseTo(50, 6)
+  })
+  it('shows its own display name', () => {
+    expect(getShortModelName('claude-fable-5')).toBe('Fable 5')
+  })
 })
 
 describe('builtin aliases - getModelCosts', () => {
@@ -241,6 +264,17 @@ describe('existing model names still resolve', () => {
   it('anthropic/-prefixed anthropic/claude-opus-4-6', () => {
     expect(getModelCosts('anthropic/claude-opus-4-6')).not.toBeNull()
   })
+
+  // #420: 4.8 has its own LiteLLM pricing tier ($5/$25), so it must not fall
+  // through the prefix match to the older, 3x-pricier claude-opus-4 ($15/$75).
+  it('claude-opus-4-8 prices at its own tier, not original claude-opus-4', () => {
+    const v48 = getModelCosts('claude-opus-4-8')
+    expect(v48).not.toBeNull()
+    // $5/$25 per M tokens — the 4.6/4.7 tier, not the original opus-4 $15/$75.
+    expect(v48!.inputCostPerToken).toBeCloseTo(0.000005, 12)
+    expect(v48!.outputCostPerToken).toBeCloseTo(0.000025, 12)
+    expect(v48!.inputCostPerToken).not.toEqual(getModelCosts('claude-opus-4')!.inputCostPerToken)
+  })
 })
 
 // Issue #159: every model name Cursor emits in its SQLite database must
@@ -312,6 +346,51 @@ describe('Cursor model variants resolve to pricing', () => {
   }
 })
 
+// Regression: LiteLLM ships `snowflake/claude-4-opus` ($5/M, a gateway rate),
+// which the bundler strips to a bare `claude-4-opus` snapshot key. Without the
+// alias-precedence guard in getModelCosts, that bare reseller key shadows the
+// curated alias `claude-4-opus -> claude-opus-4` and mis-prices Opus 4 at a
+// third of its official list price. Pin the official number so a re-shadowing
+// fails loudly rather than silently under-reporting spend.
+describe('alias precedence over stripped reseller keys', () => {
+  it('claude-4-opus resolves to the official Opus 4 list price, not a gateway discount', () => {
+    const aliased = getModelCosts('claude-4-opus')
+    const canonical = getModelCosts('claude-opus-4')
+    expect(aliased).not.toBeNull()
+    expect(canonical).not.toBeNull()
+    expect(aliased!.inputCostPerToken).toBe(canonical!.inputCostPerToken)
+    expect(aliased!.outputCostPerToken).toBe(canonical!.outputCostPerToken)
+    expect(aliased!.inputCostPerToken).toBe(15e-6)
+    expect(aliased!.outputCostPerToken).toBe(75e-6)
+  })
+
+  it('the explicit provider prefix is still honored for the gateway rate', () => {
+    // The guard fires only for the bare name; a fully-qualified gateway id must
+    // still return that gateway's own price when LiteLLM publishes one.
+    const gateway = getModelCosts('snowflake/claude-4-opus')
+    const bare = getModelCosts('claude-4-opus')
+    expect(gateway).not.toBeNull()
+    expect(gateway!.inputCostPerToken).toBeLessThan(bare!.inputCostPerToken)
+  })
+})
+
+// The case-insensitive index that lets `MiniMax-M3` reach a lowercase
+// `minimax-m3` slug must NOT let a case-mismatched query resolve to one of
+// LiteLLM's [0,0] price stubs (e.g. `GigaChat-2-Max`). Doing so would flip an
+// honest null (which fires the "no pricing data, will show $0" warning) into a
+// silent $0 and hide real spend. A case-EXACT query still finds the stub.
+describe('zero-priced stubs do not satisfy case-insensitive lookup', () => {
+  it('a case-mismatched query to a [0,0] stub stays null', () => {
+    expect(getModelCosts('gigachat-2-max')).toBeNull()
+  })
+
+  it('the case-exact stub still resolves (just at zero cost)', () => {
+    const exact = getModelCosts('GigaChat-2-Max')
+    expect(exact).not.toBeNull()
+    expect(exact!.inputCostPerToken).toBe(0)
+  })
+})
+
 describe('DeepSeek v4 models resolve to pricing', () => {
   it('deepseek-v4-pro has current official discounted pricing', () => {
     const costs = getModelCosts('deepseek-v4-pro')
@@ -351,7 +430,7 @@ describe('DeepSeek v4 models resolve to pricing', () => {
 
   it('keeps bundled DeepSeek v4 fallback entries when runtime pricing cache is stale', async () => {
     const previousCacheDir = process.env['CODEBURN_CACHE_DIR']
-    const cacheRoot = await mkdtemp(join(tmpdir(), 'codeburn-pricing-cache-'))
+    const cacheRoot = await mkdtemp(join(tmpdir(), 'quantum-watcher-pricing-cache-'))
 
     try {
       process.env['CODEBURN_CACHE_DIR'] = cacheRoot

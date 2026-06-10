@@ -8,7 +8,7 @@
     <a href="https://www.npmjs.com/package/codeburn"><img src="https://img.shields.io/npm/v/codeburn.svg" alt="npm version" /></a>
     <a href="https://www.npmjs.com/package/codeburn"><img src="https://img.shields.io/npm/dt/codeburn.svg" alt="total downloads" /></a>                                                       
     <a href="https://github.com/getagentseal/codeburn/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/codeburn.svg" alt="license" /></a>                                            
-    <a href="https://github.com/getagentseal/codeburn"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="node version" /></a>                                       
+    <a href="https://github.com/getagentseal/codeburn"><img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg" alt="node version" /></a>                                       
     <a href="https://discord.gg/w2sw8mCqep"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>                                     
     <a href="https://github.com/sponsors/iamtoruk"><img src="https://img.shields.io/badge/sponsor-♥-ea4aaa?logo=github" alt="Sponsor" /></a>                                                  
   </p> 
@@ -102,6 +102,7 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | <img src="assets/providers/codex.png" width="28" />        | Codex (OpenAI) | Yes       | [codex.md](docs/providers/codex.md)               |
 | <img src="assets/providers/cursor.jpg" width="28" />       | Cursor         | Yes       | [cursor.md](docs/providers/cursor.md)             |
 | <img src="assets/providers/cursor-agent.jpg" width="28" /> | cursor-agent   | Yes       | [cursor-agent.md](docs/providers/cursor-agent.md) |
+| <img src="assets/providers/devin.png" width="28" />        | Devin          | Yes       | [devin.md](docs/providers/devin.md)               |
 | <img src="assets/providers/forge.png" width="28" />        | Forge          | Yes       | [forge.md](docs/providers/forge.md)               |
 | <img src="assets/providers/gemini.png" width="28" />       | Gemini CLI     | Yes       | [gemini.md](docs/providers/gemini.md)             |
 | <img src="assets/providers/mistral-vibe.svg" width="28" /> | Mistral Vibe   | Yes       | [mistral-vibe.md](docs/providers/mistral-vibe.md) |
@@ -121,10 +122,10 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | <img src="assets/providers/antigravity.png" width="28" />  | Antigravity    | Yes       | [antigravity.md](docs/providers/antigravity.md)   |
 | <img src="assets/providers/crush.png" width="28" />        | Crush          | Yes       | [crush.md](docs/providers/crush.md)               |
 |                                                            | Warp           | Yes       | [warp.md](docs/providers/warp.md)                 |
+|                                                            | Mux (coder)    | Yes       | [mux.md](docs/providers/mux.md)                   |
+|                                                            | Vercel AI Gateway | Yes*   | [vercel-gateway.md](docs/providers/vercel-gateway.md) |
 
 Each provider doc lists the exact data location, storage format, and known quirks. Linux and Windows paths are detected automatically. If a path has changed or is wrong, please [open an issue](https://github.com/getagentseal/codeburn/issues).
-
-Provider logos are trademarks of their respective owners. The icon set was sourced from [tokscale](https://github.com/junhoyeo/tokscale) (MIT), official vendor assets, and simple provider identifiers, used under nominative fair use for the purpose of identifying supported tools.
 
 CodeBurn auto-detects which AI coding tools you use. If multiple providers have session data on disk, press `p` in the dashboard to toggle between them.
 
@@ -132,11 +133,15 @@ The `--provider` flag filters any command to a single provider: `codeburn report
 
 ### Provider Notes
 
+**Codex (OpenAI)** stores sessions at `~/.codex/sessions/` as JSONL rollout files. CodeBurn reads `token_count` events and attributes cost by project working directory. Use `codeburn report --provider codex` to view Codex only, or `codeburn` (all providers) to combine with Cursor and others.
+
+**Vercel AI Gateway** pulls usage from the [Vercel AI Gateway reporting API](https://vercel.com/docs/ai-gateway/capabilities/custom-reporting) (cloud, not local logs). Set `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` (from `vercel env pull` / `vercel dev`). Requires a Vercel plan with Custom Reporting access. Example: `codeburn report --provider vercel-gateway -p month`. Without credentials, this provider is skipped silently in the combined dashboard.
+
 **Cursor** reads token usage from its local SQLite database. Since Cursor's "Auto" mode hides the actual model used, costs are estimated using Sonnet pricing (labeled "Auto (Sonnet est.)" in the dashboard). The Cursor view shows a Languages panel instead of Core Tools/Shell/MCP panels, since Cursor does not log individual tool calls. First run on a large Cursor database may take up to a minute; results are cached and subsequent runs are instant.
 
 **Gemini CLI** stores sessions as single JSON files. Each session embeds real token counts (input, output, cached, thoughts) per message, so no estimation is needed. Gemini reports input tokens inclusive of cached; CodeBurn subtracts cached from input before pricing to avoid double charging.
 
-**Antigravity CLI** exposes exact usage through a short-lived local process while `agy` is running. Install the optional live hook with `codeburn antigravity-hook install` to capture short CLI sessions even when the menubar's 30-second refresh misses that window. The hook stores sanitized usage totals only, not prompts or local working-directory paths. Remove it with `codeburn antigravity-hook uninstall`; if `--force` replaced an existing statusLine command, uninstall restores that previous command.
+**Antigravity CLI and IDE** automatically discover conversation session files on disk (stored under `.gemini/` folders) and query the running language server process to extract granular trajectory and pricing information. For the CLI, which runs as a short-lived process, you can optionally install a status line hook using `codeburn antigravity-hook install` to capture usage even when the menubar's 30-second refresh misses it. The IDE is detected automatically via the `--app-data-dir antigravity-ide` flag on Windows.
 
 **Mistral Vibe** stores sessions as folders under `~/.vibe/logs/session/` (or `$VIBE_HOME/logs/session/`). CodeBurn reads cumulative prompt/completion totals and model pricing from `meta.json`, then reads `messages.jsonl` for the first user prompt and assistant tool calls. Subagent sessions under `agents/` are counted as separate Vibe sessions.
 
@@ -283,6 +288,7 @@ Subscription tracking for Claude Pro, Claude Max, Cursor Pro, and custom provide
 codeburn currency GBP          # set to British Pounds
 codeburn currency AUD          # set to Australian Dollars
 codeburn currency JPY          # set to Japanese Yen
+codeburn currency CNY          # set to Chinese Yuan
 codeburn currency              # show current setting
 codeburn currency --reset      # back to USD
 ```

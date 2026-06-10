@@ -1,4 +1,4 @@
-import type { ToolCall } from '../types.js'
+import type { DateRange, ToolCall } from '../types.js'
 
 export type SessionSource = {
   path: string
@@ -38,8 +38,11 @@ export type ParsedProviderCall = {
 export type Provider = {
   name: string
   displayName: string
+  // Data comes from a live API fetch (no on-disk file). Such sources can't be
+  // fingerprinted or incrementally cached, so the parser re-fetches every run.
+  network?: boolean
   modelDisplayName(model: string): string
   toolDisplayName(rawTool: string): string
   discoverSessions(): Promise<SessionSource[]>
-  createSessionParser(source: SessionSource, seenKeys: Set<string>): SessionParser
+  createSessionParser(source: SessionSource, seenKeys: Set<string>, dateRange?: DateRange): SessionParser
 }

@@ -1,7 +1,7 @@
 {
   "name": "quantum-watcher",
-  "version": "0.9.11",
-  "description": "The quantum fuel gauge for your AI coding spend — cost, tokens, agents, and projects",
+  "version": "0.9.12",
+  "description": "See where your AI coding tokens go - by task, tool, model, and project",
   "type": "module",
   "main": "./dist/cli.js",
   "bin": {
@@ -22,6 +22,7 @@
     "cursor",
     "codex",
     "kimi",
+    "devin",
     "ibm-bob",
     "opencode",
     "pi",
@@ -46,11 +47,13 @@
   },
   "homepage": "https://github.com/KingJackWins/quantum-watcher#readme",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
     "ink": "^7.0.0",
     "react": "^19.2.5",
-    "strip-ansi": "^7.2.0"
+    "strip-ansi": "^7.2.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",

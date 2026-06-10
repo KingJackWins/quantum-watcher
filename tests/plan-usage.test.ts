@@ -135,8 +135,8 @@ describe('getPlanUsage', () => {
       setAt: '2026-04-01T00:00:00.000Z',
     }, [
       {
-        project: 'codeburn',
-        projectPath: '/tmp/codeburn',
+        project: 'quantum-watcher',
+        projectPath: '/tmp/quantum-watcher',
         totalCostUSD: 10,
         totalApiCalls: 1,
         sessions: [
@@ -184,7 +184,7 @@ describe('getPlanUsage', () => {
   })
 
   it('keeps the provider-specific parser filter for one active plan', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'codeburn-plan-usage-test-'))
+    const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-usage-test-'))
     const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 
@@ -199,8 +199,8 @@ describe('getPlanUsage', () => {
 
       parseAllSessionsMock.mockResolvedValue([
         {
-          project: 'codeburn',
-          projectPath: '/tmp/codeburn',
+          project: 'quantum-watcher',
+          projectPath: '/tmp/quantum-watcher',
           totalCostUSD: 80,
           totalApiCalls: 1,
           sessions: [],
@@ -227,7 +227,7 @@ describe('getPlanUsage', () => {
   })
 
   it('computes multiple active plan usages from one all-provider parse', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'codeburn-plan-usage-test-'))
+    const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-usage-test-'))
     const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 
@@ -249,14 +249,14 @@ describe('getPlanUsage', () => {
 
       parseAllSessionsMock.mockResolvedValue([
         {
-          project: 'codeburn',
-          projectPath: '/tmp/codeburn',
+          project: 'quantum-watcher',
+          projectPath: '/tmp/quantum-watcher',
           totalCostUSD: 150,
           totalApiCalls: 2,
           sessions: [
             {
               sessionId: 'session-1',
-              project: 'codeburn',
+              project: 'quantum-watcher',
               firstTimestamp: '2026-04-03T10:00:00.000Z',
               lastTimestamp: '2026-04-03T11:00:00.000Z',
               totalCostUSD: 150,

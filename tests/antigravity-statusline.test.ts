@@ -1,21 +1,30 @@
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { delimiter, join } from 'path'
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildAntigravityHookLookupPath,
   installAntigravityStatusLineHook,
+  resolvePersistentCodeburnPathFromPath,
   uninstallAntigravityStatusLineHook,
 } from '../src/antigravity-statusline.js'
 
 describe('Antigravity CLI statusLine hook installer', () => {
   async function withTempSettings(run: (dir: string, settingsPath: string) => Promise<void>) {
-    const dir = await mkdtemp(join(tmpdir(), 'codeburn-agy-hook-'))
+    const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-agy-hook-'))
     const settingsPath = join(dir, 'settings.json')
+    const binDir = join(dir, 'bin')
+    const quantumWatcherPath = join(binDir, process.platform === 'win32' ? 'quantum-watcher.cmd' : 'quantum-watcher')
     const oldSettingsPath = process.env['CODEBURN_ANTIGRAVITY_SETTINGS_PATH']
     const oldCacheDir = process.env['CODEBURN_CACHE_DIR']
+    const oldPath = process.env.PATH
+    await mkdir(binDir, { recursive: true })
+    await writeFile(quantumWatcherPath, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n')
+    await chmod(quantumWatcherPath, 0o755)
     process.env['CODEBURN_ANTIGRAVITY_SETTINGS_PATH'] = settingsPath
     process.env['CODEBURN_CACHE_DIR'] = join(dir, 'cache')
+    process.env.PATH = binDir
 
     try {
       await run(dir, settingsPath)
@@ -24,9 +33,37 @@ describe('Antigravity CLI statusLine hook installer', () => {
       else process.env['CODEBURN_ANTIGRAVITY_SETTINGS_PATH'] = oldSettingsPath
       if (oldCacheDir === undefined) delete process.env['CODEBURN_CACHE_DIR']
       else process.env['CODEBURN_CACHE_DIR'] = oldCacheDir
+      if (oldPath === undefined) delete process.env.PATH
+      else process.env.PATH = oldPath
       await rm(dir, { recursive: true, force: true })
     }
   }
+
+  it('builds a lookup PATH with user paths before fallbacks', () => {
+    const lookupPath = buildAntigravityHookLookupPath(['/Users/me/.nvm/versions/node/v22.13.0/bin', '/usr/bin'].join(delimiter))
+
+    expect(lookupPath.split(delimiter)).toContain('/Users/me/.nvm/versions/node/v22.13.0/bin')
+    if (process.platform !== 'win32') expect(lookupPath.split(delimiter)).toContain('/opt/homebrew/bin')
+  })
+
+  it('skips transient npx quantum-watcher shims when resolving the hook command', async () => {
+    await withTempSettings(async (dir) => {
+      const npxBin = join(dir, '.npm', '_npx', 'abcd', 'node_modules', '.bin')
+      const persistentBin = join(dir, 'persistent-bin')
+      const npxCodeburn = join(npxBin, process.platform === 'win32' ? 'quantum-watcher.cmd' : 'quantum-watcher')
+      const persistentCodeburn = join(persistentBin, process.platform === 'win32' ? 'quantum-watcher.cmd' : 'quantum-watcher')
+      await mkdir(npxBin, { recursive: true })
+      await mkdir(persistentBin, { recursive: true })
+      await writeFile(npxCodeburn, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n')
+      await writeFile(persistentCodeburn, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n')
+      await chmod(npxCodeburn, 0o755)
+      await chmod(persistentCodeburn, 0o755)
+
+      const resolved = await resolvePersistentCodeburnPathFromPath([npxBin, persistentBin].join(delimiter))
+
+      expect(resolved).toBe(persistentCodeburn)
+    })
+  })
 
   it('backs up and restores an existing custom statusLine when forced', async () => {
     await withTempSettings(async (dir, settingsPath) => {
@@ -42,6 +79,7 @@ describe('Antigravity CLI statusLine hook installer', () => {
 
       const installed = JSON.parse(await readFile(settingsPath, 'utf-8'))
       expect(installed.statusLine.command).toContain('agy-statusline-hook')
+      expect(installed.statusLine.command).not.toContain('custom-statusline')
 
       const backupPath = join(dir, 'cache', 'antigravity-statusline-previous.json')
       const backup = JSON.parse(await readFile(backupPath, 'utf-8'))
@@ -53,7 +91,7 @@ describe('Antigravity CLI statusLine hook installer', () => {
     })
   })
 
-  it('installs CodeBurn statusLine when no statusLine exists', async () => {
+  it('installs QuantumWatcher statusLine when no statusLine exists', async () => {
     await withTempSettings(async (_dir, settingsPath) => {
       expect(await installAntigravityStatusLineHook(false)).toBe('installed')
       expect(await installAntigravityStatusLineHook(false)).toBe('already-installed')
@@ -64,15 +102,50 @@ describe('Antigravity CLI statusLine hook installer', () => {
         padding: 0,
       })
       expect(settings.statusLine.command).toContain('agy-statusline-hook')
+      expect(settings.statusLine.command).toContain(join(_dir, 'bin'))
+      expect(settings.statusLine.command).not.toContain('dist/cli.js')
     })
   })
 
-  it('removes CodeBurn statusLine when there is no previous hook backup', async () => {
+  it('repairs an existing stale QuantumWatcher statusLine command without force', async () => {
+    await withTempSettings(async (dir, settingsPath) => {
+      await writeFile(settingsPath, JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: "'/usr/local/bin/node' '/Users/me/quantum-watcher-agy-statusline/dist/cli.js' agy-statusline-hook",
+          padding: 0,
+        },
+      }))
+
+      expect(await installAntigravityStatusLineHook(false)).toBe('installed')
+
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'))
+      expect(settings.statusLine.command).toContain(join(dir, 'bin'))
+      expect(settings.statusLine.command).toContain('agy-statusline-hook')
+      expect(settings.statusLine.command).not.toContain('quantum-watcher-agy-statusline/dist/cli.js')
+    })
+  })
+
+  it('treats a custom statusLine that only mentions the hook token as custom, not QuantumWatcher-owned', async () => {
+    await withTempSettings(async (_dir, settingsPath) => {
+      const custom = 'mybar --note "runs agy-statusline-hook nightly"'
+      await writeFile(settingsPath, JSON.stringify({
+        statusLine: { type: 'command', command: custom, padding: 0 },
+      }))
+
+      await expect(installAntigravityStatusLineHook(false)).rejects.toThrow(/custom statusLine/)
+
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'))
+      expect(settings.statusLine.command).toBe(custom)
+    })
+  })
+
+  it('removes QuantumWatcher statusLine when there is no previous hook backup', async () => {
     await withTempSettings(async (_dir, settingsPath) => {
       await writeFile(settingsPath, JSON.stringify({
         statusLine: {
           type: 'command',
-          command: 'codeburn agy-statusline-hook',
+          command: 'quantum-watcher agy-statusline-hook',
           padding: 0,
         },
       }))
