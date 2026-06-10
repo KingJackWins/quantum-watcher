@@ -5,6 +5,19 @@ struct HeroSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Specular "shine" -- a small streak of light reflecting off the
+            // glass above the caption, like a highlight on a curved pane.
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.5), Color.white.opacity(0.0)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(width: 36, height: 3)
+                .opacity(0.6)
+
             SectionCaption(text: caption)
 
             HStack(alignment: .firstTextBaseline) {
@@ -19,6 +32,8 @@ struct HeroSection: View {
                             endPoint: .bottom
                         )
                     )
+                    // Soft accent glow: the number looks lit from within the glass.
+                    .shadow(color: Theme.brandAccent.opacity(0.35), radius: 12, y: 0)
 
                 Spacer()
 
@@ -81,6 +96,7 @@ struct HeroSection: View {
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 12)
+        .glassCard(cornerRadius: 14)
     }
 
     private var heroText: String {

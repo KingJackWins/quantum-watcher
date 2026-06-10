@@ -6,8 +6,9 @@ struct SectionCaption: View {
     var body: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(Theme.brandAccent.opacity(0.7))
-                .frame(width: 3, height: 3)
+                .fill(Theme.brandAccent)
+                .frame(width: 4, height: 4)
+                .shadow(color: Theme.brandAccent.opacity(0.8), radius: 3)
             Text(text)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -17,7 +18,8 @@ struct SectionCaption: View {
 }
 
 /// Collapsible section shell with a clickable caption, optional inline trailing
-/// view (e.g. column headers), and a chevron.
+/// view (e.g. column headers), and a chevron. Rendered as a floating glass slab;
+/// outer spacing is owned by MenuBarContent's section stack.
 struct CollapsibleSection<Trailing: View, Content: View>: View {
     let caption: String
     @Binding var isExpanded: Bool
@@ -46,8 +48,9 @@ struct CollapsibleSection<Trailing: View, Content: View>: View {
                 HStack(spacing: 8) {
                     HStack(spacing: 5) {
                         Circle()
-                            .fill(Theme.brandAccent.opacity(0.7))
-                            .frame(width: 3, height: 3)
+                            .fill(Theme.brandAccent)
+                            .frame(width: 4, height: 4)
+                            .shadow(color: Theme.brandAccent.opacity(0.8), radius: 3)
                         Text(caption)
                             .font(.system(size: 11.5, weight: .medium))
                             .tracking(-0.1)
@@ -69,8 +72,8 @@ struct CollapsibleSection<Trailing: View, Content: View>: View {
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(12)
+        .glassCard(cornerRadius: 12)
     }
 }
 

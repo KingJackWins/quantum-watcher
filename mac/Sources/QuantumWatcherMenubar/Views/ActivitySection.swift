@@ -77,10 +77,17 @@ struct FixedBar: View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(.secondary.opacity(0.15))
+                    .fill(Color.white.opacity(0.08))
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Theme.brandAccent)
+                    .fill(
+                        LinearGradient(
+                            colors: [Theme.brandAccentLight, Theme.brandAccent],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
                     .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(fraction))))
+                    .shadow(color: Theme.brandAccent.opacity(0.4), radius: 2)
             }
         }
     }

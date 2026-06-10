@@ -245,8 +245,29 @@ private struct AgentTab: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? AnyShapeStyle(Theme.brandAccent) : AnyShapeStyle(Color.secondary.opacity(0.08)))
+            ZStack {
+                if isActive {
+                    // Glowing glass button: accent core with a sheen of light
+                    // across the top, lifted by an accent-colored glow.
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Theme.brandAccent)
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.25), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                } else {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                }
+            }
+            .compositingGroup()
+            .shadow(color: isActive ? Theme.brandAccent.opacity(0.45) : .clear, radius: 6, y: 2)
         )
         .foregroundStyle(isActive ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
         .contentShape(Rectangle())

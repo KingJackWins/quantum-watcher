@@ -20,9 +20,23 @@ struct PeriodSegmentedControl: View {
                 }
                 .buttonStyle(.plain)
                 .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isActive ? Color(NSColor.windowBackgroundColor).opacity(0.85) : .clear)
-                        .shadow(color: .black.opacity(isActive ? 0.06 : 0), radius: 1, y: 0.5)
+                    ZStack {
+                        if isActive {
+                            // Raised glass key: frost fill + top-lit specular rim.
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.white.opacity(0.12))
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(
+                                    LinearGradient(
+                                        colors: [Color.white.opacity(0.25), Color.white.opacity(0.05)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    lineWidth: 0.5
+                                )
+                        }
+                    }
+                    .shadow(color: .black.opacity(isActive ? 0.25 : 0), radius: 3, y: 1)
                 )
             }
 
@@ -38,9 +52,22 @@ struct PeriodSegmentedControl: View {
             }
             .buttonStyle(.plain)
             .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(store.isDayMode ? Color(NSColor.windowBackgroundColor).opacity(0.85) : .clear)
-                    .shadow(color: .black.opacity(store.isDayMode ? 0.06 : 0), radius: 1, y: 0.5)
+                ZStack {
+                    if store.isDayMode {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white.opacity(0.12))
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.25), Color.white.opacity(0.05)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 0.5
+                            )
+                    }
+                }
+                .shadow(color: .black.opacity(store.isDayMode ? 0.25 : 0), radius: 3, y: 1)
             )
             .popover(isPresented: $showingCalendar, arrowEdge: .bottom) {
                 CalendarPopover(isPresented: $showingCalendar)
@@ -49,12 +76,13 @@ struct PeriodSegmentedControl: View {
         }
         .padding(2)
         .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.secondary.opacity(0.08))
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                )
         )
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .padding(.bottom, 10)
     }
 }
 

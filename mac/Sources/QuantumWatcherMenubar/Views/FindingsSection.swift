@@ -66,12 +66,7 @@ struct FindingsSection: View {
                 }
             }
             .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.06))
-            )
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .glassCard(cornerRadius: 12)
         )
     }
 

@@ -6,41 +6,58 @@ struct MenuBarContent: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack {
+            // Ambient accent light inside the glass. Reads Theme.brandAccent
+            // dynamically so palette switches re-tint the whole atmosphere.
+            RadialGradient(
+                colors: [Theme.brandAccent.opacity(0.16), .clear],
+                center: UnitPoint(x: 0.5, y: -0.1),
+                startRadius: 0,
+                endRadius: 340
+            )
+            RadialGradient(
+                colors: [Theme.brandAccent.opacity(0.07), .clear],
+                center: UnitPoint(x: 0.92, y: 1.05),
+                startRadius: 0,
+                endRadius: 260
+            )
+
+            VStack(spacing: 0) {
             Header()
 
-            Divider()
+            // Glass separator
+            Rectangle()
+                .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 0.5)
 
             if showAgentTabs {
                 AgentTabStrip()
-                Divider()
+                Rectangle()
+                    .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing))
+                    .frame(height: 0.5)
             }
 
             ZStack {
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
+                    VStack(spacing: 8) {
                         HeroSection()
-                        Divider().opacity(0.5)
                         PeriodSegmentedControl()
-                        Divider().opacity(0.5)
                         if isFilteredEmpty {
                             EmptyProviderState(provider: store.selectedProvider, periodLabel: store.selectionLabel)
                         } else {
                             HeatmapSection()
-                                .padding(.horizontal, 14)
-                                .padding(.top, 10)
-                                .padding(.bottom, 10)
+                                .padding(.horizontal, 4)
+                                .padding(.top, 4)
+                                .padding(.bottom, 4)
                                 .zIndex(10)
-                            Divider().opacity(0.5)
                             ActivitySection()
-                            Divider().opacity(0.5)
                             ModelsSection()
-                            Divider().opacity(0.5)
                             ToolingSection()
-                            Divider().opacity(0.5)
                             FindingsSection()
                         }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
                 }
 
                 // Overlay fires only on cold cache for the current key. This
@@ -78,13 +95,17 @@ struct MenuBarContent: View {
             .frame(height: 520)
             .animation(.easeInOut(duration: 0.2), value: store.isLoading)
 
-            Divider()
+            // Glass footer separator
+            Rectangle()
+                .fill(LinearGradient(colors: [.clear, Color.white.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 0.5)
 
             FooterBar()
 
             CLIUpdateBanner()
 
             StarBanner()
+            }
         }
     }
 
@@ -627,6 +648,7 @@ struct FooterBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
     }
 
     private func openReport() {
