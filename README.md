@@ -1,8 +1,12 @@
 <p align="center">
+  <a href="https://claude.com/open-source-max"><img src="https://img.shields.io/badge/Claude_for_Open_Source-Recipient-da7756?style=for-the-badge&labelColor=1a1a1a" alt="Claude for Open Source Recipient" /></a>
+</p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/providers.png" alt="CodeBurn" width="520" />
 </p>
 
-<p align="center"><strong>See where your AI coding tokens go.</strong></p>
+<p align="center"><strong>See where your AI tokens usage go.</strong></p>
 
 <p align="center">                                                                                                                                                                          
     <a href="https://www.npmjs.com/package/codeburn"><img src="https://img.shields.io/npm/v/codeburn.svg" alt="npm version" /></a>
@@ -13,7 +17,7 @@
     <a href="https://github.com/sponsors/iamtoruk"><img src="https://img.shields.io/badge/sponsor-♥-ea4aaa?logo=github" alt="Sponsor" /></a>                                                  
   </p> 
 
-CodeBurn tracks token usage, cost, and performance across **25 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
+CodeBurn tracks token usage, cost, and performance across **25 AI agents**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
 
 Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads session data directly from disk and prices every call using [LiteLLM](https://github.com/BerriAI/litellm).
 
@@ -206,6 +210,7 @@ codeburn optimize                       # scan the last 30 days
 codeburn optimize -p today              # today only
 codeburn optimize -p week               # last 7 days
 codeburn optimize --provider claude     # restrict to one provider
+codeburn optimize --format json         # setup health + findings as JSON
 ```
 
 Scans your sessions and your `~/.claude/` setup for waste patterns:
@@ -255,6 +260,7 @@ codeburn yield                  # last 7 days (default)
 codeburn yield -p today         # today only
 codeburn yield -p 30days        # last 30 days
 codeburn yield -p month         # this calendar month
+codeburn yield --format json    # productive/reverted/abandoned spend as JSON
 ```
 
 Correlates AI sessions with git commits by timestamp:
@@ -345,7 +351,7 @@ codeburn report --format json | jq '.projects'
 codeburn today --format json | jq '.overview.cost'
 ```
 
-For lighter output, use `status --format json` (today and month totals only) or file exports (`export -f json`).
+For lighter output, use `status --format json` (today and month totals only), `optimize --format json` (setup health, findings, and copy-paste fixes), `yield --format json` (productive/reverted/abandoned spend), or file exports (`export -f json`).
 
 ## Menu Bar
 

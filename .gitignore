@@ -46,3 +46,6 @@ appstore/
 
 # WIP / not ready
 src/summit.ts
+
+# Agent worktrees (exe-os)
+/.worktrees/
