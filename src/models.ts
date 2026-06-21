@@ -242,6 +242,7 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'openclaw-auto':                 'claude-sonnet-4-5',
   'warp-auto-efficient':           'gpt-5.3-codex',
   'warp-auto-powerful':            'claude-opus-4-6',
+  'grok-build':                    'grok-build-0.1',
   'GPT-5.3 Codex (low reasoning)': 'gpt-5.3-codex',
   'GPT-5.3 Codex (medium reasoning)': 'gpt-5.3-codex',
   'GPT-5.3 Codex (high reasoning)': 'gpt-5.3-codex',
@@ -321,6 +322,9 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'gemini-3-pro':                   'gemini-3-pro-preview',
   'gemini-3.1-flash-image':         'gemini-3.1-flash-image-preview',
   'gemini-3.1-flash-lite':          'gemini-3.1-flash-lite-preview',
+  // ZCode runs GLM-5.2 through z.ai's start-plan subscription; it isn't in
+  // LiteLLM yet. Price as the nearest released sibling (GLM-5.1) until it is.
+  'GLM-5.2':                        'glm-5p1',
 }
 
 let userAliases: Record<string, string> = {}

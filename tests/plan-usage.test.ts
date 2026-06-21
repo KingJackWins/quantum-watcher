@@ -135,8 +135,8 @@ describe('getPlanUsage', () => {
       setAt: '2026-04-01T00:00:00.000Z',
     }, [
       {
-        project: 'quantum-watcher',
-        projectPath: '/tmp/quantum-watcher',
+        project: 'codeburn',
+        projectPath: '/tmp/codeburn',
         totalCostUSD: 10,
         totalApiCalls: 1,
         sessions: [
@@ -185,7 +185,6 @@ describe('getPlanUsage', () => {
 
   it('keeps the provider-specific parser filter for one active plan', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-usage-test-'))
-    const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 
     try {
@@ -199,8 +198,8 @@ describe('getPlanUsage', () => {
 
       parseAllSessionsMock.mockResolvedValue([
         {
-          project: 'quantum-watcher',
-          projectPath: '/tmp/quantum-watcher',
+          project: 'codeburn',
+          projectPath: '/tmp/codeburn',
           totalCostUSD: 80,
           totalApiCalls: 1,
           sessions: [],
@@ -217,18 +216,12 @@ describe('getPlanUsage', () => {
       expect(usages).toHaveLength(1)
       expect(usages[0]?.spentApiEquivalentUsd).toBe(80)
     } finally {
-      if (previousHome === undefined) {
-        delete process.env['HOME']
-      } else {
-        process.env['HOME'] = previousHome
-      }
       await rm(dir, { recursive: true, force: true })
     }
   })
 
   it('computes multiple active plan usages from one all-provider parse', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'quantum-watcher-plan-usage-test-'))
-    const previousHome = process.env['HOME']
     process.env['HOME'] = dir
 
     try {
@@ -249,14 +242,14 @@ describe('getPlanUsage', () => {
 
       parseAllSessionsMock.mockResolvedValue([
         {
-          project: 'quantum-watcher',
-          projectPath: '/tmp/quantum-watcher',
+          project: 'codeburn',
+          projectPath: '/tmp/codeburn',
           totalCostUSD: 150,
           totalApiCalls: 2,
           sessions: [
             {
               sessionId: 'session-1',
-              project: 'quantum-watcher',
+              project: 'codeburn',
               firstTimestamp: '2026-04-03T10:00:00.000Z',
               lastTimestamp: '2026-04-03T11:00:00.000Z',
               totalCostUSD: 150,
@@ -344,11 +337,6 @@ describe('getPlanUsage', () => {
       expect(usages.map(usage => usage.plan.provider)).toEqual(['claude', 'codex'])
       expect(usages.map(usage => usage.spentApiEquivalentUsd)).toEqual([100, 50])
     } finally {
-      if (previousHome === undefined) {
-        delete process.env['HOME']
-      } else {
-        process.env['HOME'] = previousHome
-      }
       await rm(dir, { recursive: true, force: true })
     }
   })

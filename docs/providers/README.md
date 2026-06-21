@@ -27,6 +27,8 @@ For the architectural picture, see `../architecture.md`.
 | [OMP](omp.md) | JSONL | `src/providers/pi.ts` | `tests/providers/omp.test.ts` |
 | [Qwen](qwen.md) | JSONL | `src/providers/qwen.ts` | none |
 | [Roo Code](roo-code.md) | JSON | `src/providers/roo-code.ts` | `tests/providers/roo-code.test.ts` |
+| [Zerostack](zerostack.md) | JSON | `src/providers/zerostack.ts` | `tests/providers/zerostack.test.ts` |
+| [Grok Build](grok.md) | JSON/JSONL | `src/providers/grok.ts` | `tests/providers/grok.test.ts` |
 
 ### Lazy (loaded on first call)
 
@@ -41,6 +43,7 @@ For the architectural picture, see `../architecture.md`.
 | [OpenCode](opencode.md) | SQLite | `src/providers/opencode.ts` | `tests/providers/opencode.test.ts` |
 | [Warp](warp.md) | SQLite | `src/providers/warp.ts` | `tests/providers/warp.test.ts` |
 | [Vercel AI Gateway](vercel-gateway.md) | REST API | `src/providers/vercel-gateway.ts` | `tests/providers/vercel-gateway.test.ts` |
+| [ZCode](zcode.md) | SQLite | `src/providers/zcode.ts` | `tests/providers/zcode.test.ts` |
 
 ### Shared
 
