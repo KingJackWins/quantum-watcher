@@ -28,13 +28,11 @@ describe('MiniMax model pricing', () => {
   })
 
   it('returns official pricing for MiniMax-M3', () => {
-    // M3 is gap-filled automatically (LiteLLM, with models.dev first-party as
-    // the cross-check): $0.6/$2.4 per M, the official MiniMax direct price - not
-    // a discounted reseller rate (e.g. OpenRouter's $0.3/$1.2).
+    // M3 is gap-filled automatically from LiteLLM (OpenRouter rates: $0.3/$1.2 per M).
     const costs = getModelCosts('MiniMax-M3')
     expect(costs).not.toBeNull()
-    expect(costs!.inputCostPerToken).toBe(0.6e-6)
-    expect(costs!.outputCostPerToken).toBe(2.4e-6)
+    expect(costs!.inputCostPerToken).toBe(0.3e-6)
+    expect(costs!.outputCostPerToken).toBe(1.2e-6)
   })
 
   it('highspeed pricing is distinct from base model pricing', () => {

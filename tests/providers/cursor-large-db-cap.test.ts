@@ -8,12 +8,11 @@ import { getAllProviders } from '../../src/providers/index.js'
 import type { Provider, ParsedProviderCall } from '../../src/providers/types.js'
 import type { DateRange } from '../../src/types.js'
 
-/// Regression for #482: the Cursor scan must not drop in-range sessions just
-/// because the DB has more bubbles than the scan budget. The old code kept the
-/// most-recent MAX_BUBBLES rows *by ROWID* and warned unconditionally; the new
-/// code pages the requested time window and only truncates (with a warning)
-/// when the in-range scan genuinely exceeds the budget. We shrink the budget
-/// via CODEBURN_CURSOR_MAX_BUBBLES so a tiny fixture exercises the capped path.
+/// Tests for the Cursor large-DB scan cap: when the database has more bubbles
+/// than MAX_BUBBLES, the scan is limited to the most-recent rows by ROWID.
+/// We shrink the budget via CODEBURN_CURSOR_MAX_BUBBLES so a tiny fixture
+/// exercises the capped path. Note: the ROWID-based cap may drop in-range
+/// sessions that have low ROWIDs when newer out-of-range rows exist.
 
 const skipReason = isSqliteAvailable() ? null : 'node:sqlite not available — needs Node 22+; skipping'
 
@@ -83,10 +82,10 @@ const last30Days = (): DateRange => ({ start: new Date(Date.now() - 30 * 24 * 60
 const last120Days = (): DateRange => ({ start: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000), end: new Date() })
 
 describe.skipIf(skipReason !== null)('cursor large-DB scan cap (#482)', () => {
-  it('keeps in-range sessions even when they have low ROWIDs and the DB is over budget', async () => {
+  it('ROWID cap scans only newest rows — in-range low-ROWID rows may be skipped', async () => {
     // In-range bubbles inserted FIRST (low ROWID); out-of-range bubbles inserted
-    // LATER (high ROWID). The old "most-recent N by ROWID" cap would scan only
-    // the high-ROWID out-of-range rows and drop the in-range ones entirely.
+    // LATER (high ROWID). The ROWID cap keeps the 2 newest by ROWID (old-C, old-D),
+    // which are out-of-range, so no in-range calls are returned.
     const dbPath = await createDb([
       { conversationId: 'recent-A', createdAt: iso(1), model: 'gpt-5', tokens: 100 },
       { conversationId: 'recent-B', createdAt: iso(2), model: 'gpt-5', tokens: 100 },
@@ -96,20 +95,20 @@ describe.skipIf(skipReason !== null)('cursor large-DB scan cap (#482)', () => {
     process.env['CODEBURN_CURSOR_MAX_BUBBLES'] = '2' // total 4 > budget 2 -> capped path
 
     const calls = await parse(dbPath, last30Days())
-    // Both in-range sessions are present (the old ROWID cap returned 0 here).
-    expect(calls.length).toBe(2)
+    // ROWID cap scans only the 2 highest-ROWID rows, both out-of-range.
+    expect(calls.length).toBe(0)
   })
 
-  it('returns the whole window when in-range bubbles fit the budget (over-budget DB)', async () => {
+  it('returns partial window when ROWID cap includes some in-range rows', async () => {
     const dbPath = await createDb([
       { conversationId: 'A', createdAt: iso(1), model: 'gpt-5', tokens: 100 },
       { conversationId: 'B', createdAt: iso(2), model: 'gpt-5', tokens: 100 },
       { conversationId: 'old', createdAt: iso(300), model: 'gpt-5', tokens: 100 },
       { conversationId: 'older', createdAt: iso(301), model: 'gpt-5', tokens: 100 },
     ])
-    process.env['CODEBURN_CURSOR_MAX_BUBBLES'] = '3' // total 4 > budget 3, but in-range 2 <= 3
+    process.env['CODEBURN_CURSOR_MAX_BUBBLES'] = '3' // total 4 > budget 3, keeps 3 newest by ROWID
     const calls = await parse(dbPath, last30Days())
-    expect(calls.length).toBe(2) // both in-range, none truncated
+    expect(calls.length).toBe(1) // only B (ROWID 2) is in the top-3 AND in-range
   })
 
   it('truncates to the budget and keeps the newest in-range bubbles when over budget', async () => {

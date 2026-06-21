@@ -415,7 +415,7 @@ function parseBubbles(
   // 30s+ parse stalls. Compute a ROWID cutoff that limits the scan to the
   // MAX_BUBBLES most-recent bubbles when the user is over the cap, and
   // warn so they know older sessions may be missing.
-  const MAX_BUBBLES = 250_000
+  const MAX_BUBBLES = Number(process.env['CODEBURN_CURSOR_MAX_BUBBLES']) || 250_000
   let rowIdCutoff = 0
   try {
     const countRows = db.query<{ cnt: number }>(

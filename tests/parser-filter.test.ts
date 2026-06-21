@@ -33,7 +33,7 @@ describe('filterProjectsByName', () => {
   })
 
   it('include is case-insensitive', () => {
-    const result = filterProjectsByName(projects, ['AGENTSEAL'])
+    const result = filterProjectsByName(projects, ['QUANTUM MEMORY'])
     expect(result.map(p => p.project).sort()).toEqual(['Quantum Memory AI', 'dashboard'])
   })
 

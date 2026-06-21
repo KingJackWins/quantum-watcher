@@ -314,6 +314,8 @@ function parseTranscript(raw: string): { turns: ParsedTurn[]; recognized: boolea
   return { turns, recognized }
 }
 
+const warnedUnrecognizedTranscripts = new Set<string>()
+
 function createParser(
   source: SessionSource,
   seenKeys: Set<string>,
@@ -360,7 +362,10 @@ function createParser(
         const parsed = isJsonl ? parseJsonlTranscript(transcript) : parseTranscript(transcript)
 
         if (!parsed.recognized) {
-          process.stderr.write(`quantum-watcher: skipped ${basename(source.path)}: unrecognized cursor-agent transcript format\n`)
+          if (!warnedUnrecognizedTranscripts.has(source.path)) {
+            warnedUnrecognizedTranscripts.add(source.path)
+            process.stderr.write(`quantum-watcher: skipped ${basename(source.path)}: unrecognized cursor-agent transcript format\n`)
+          }
           return
         }
 
