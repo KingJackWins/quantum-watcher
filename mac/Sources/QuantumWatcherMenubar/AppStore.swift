@@ -58,6 +58,35 @@ final class AppStore {
     var dailyBudget: Double = UserDefaults.standard.double(forKey: "QuantumWatcherDailyBudget") {
         didSet { UserDefaults.standard.set(dailyBudget, forKey: "QuantumWatcherDailyBudget") }
     }
+    var dailyTokenBudget: Double = UserDefaults.standard.double(forKey: "QuantumWatcherDailyTokenBudget") {
+        didSet { UserDefaults.standard.set(dailyTokenBudget, forKey: "QuantumWatcherDailyTokenBudget") }
+    }
+
+    /// True when the menubar metric counts tokens rather than cost.
+    var isTokenMetric: Bool { displayMetric == .tokens || displayMetric == .totalTokens }
+
+    /// Active daily-budget threshold for the current metric: a token count when
+    /// tracking tokens, otherwise USD cost. 0 means the alert is off.
+    var activeDailyBudget: Double { isTokenMetric ? dailyTokenBudget : dailyBudget }
+
+    /// Today's total in the active metric (USD cost, or input+output tokens),
+    /// or nil when today's payload has not loaded yet.
+    var todayMetricTotal: Double? {
+        guard let current = todayPayload?.current else { return nil }
+        return isTokenMetric ? Double(current.inputTokens + current.outputTokens) : current.cost
+    }
+
+    /// True when today's usage has reached or passed the active daily budget.
+    var isOverDailyBudget: Bool {
+        guard activeDailyBudget > 0, let total = todayMetricTotal else { return false }
+        return total >= activeDailyBudget
+    }
+
+    /// The active daily-budget threshold formatted for display (currency or tokens).
+    var dailyBudgetLabel: String {
+        isTokenMetric ? "\(activeDailyBudget.asCompactTokens()) tokens" : activeDailyBudget.asCurrency()
+    }
+
     var isLoading: Bool { loadingCountsByKey.values.contains { $0 > 0 } }
     var isCurrentKeyLoading: Bool { loadingCountsByKey[currentKey, default: 0] > 0 }
     var hasAttemptedCurrentKeyLoad: Bool { attemptedKeys.contains(currentKey) }
@@ -1227,6 +1256,14 @@ private let thousandsFormatter: NumberFormatter = {
     func asCompactCurrencyWhole() -> String {
         let state = CurrencyState.shared
         return "\(state.symbol)\(Int((self * state.rate).rounded()))"
+    }
+
+    func asCompactTokens() -> String {
+        let n = self
+        if n >= 1_000_000_000 { return String(format: "%.1fB", n / 1_000_000_000) }
+        if n >= 1_000_000 { return String(format: "%.1fM", n / 1_000_000) }
+        if n >= 1_000 { return String(format: "%.0fK", n / 1_000) }
+        return String(format: "%.0f", n)
     }
 }
 

@@ -580,6 +580,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             _ = self.store.currency
             _ = self.store.displayMetric
             _ = self.store.dailyBudget
+            _ = self.store.dailyTokenBudget
+            // Read the derived flag so the flame re-tints when today's usage
+            // crosses the budget, not only when the budget value itself changes.
+            _ = self.store.isOverDailyBudget
             // Track the live-quota state too so the flame icon re-tints on
             // every subscription / codex usage update, not just every 30s.
             _ = self.store.subscription
@@ -666,8 +670,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // user gets a glanceable signal even when the menu bar is busy.
         let aggregate = store.aggregateQuotaStatus
         var tint = Self.flameTint(for: aggregate.severity)
-        if tint == nil, store.dailyBudget > 0,
-           let todayCost = store.todayPayload?.current.cost, todayCost >= store.dailyBudget {
+        if tint == nil, store.isOverDailyBudget {
             tint = NSColor.systemYellow
         }
         let flameConfig: NSImage.SymbolConfiguration
