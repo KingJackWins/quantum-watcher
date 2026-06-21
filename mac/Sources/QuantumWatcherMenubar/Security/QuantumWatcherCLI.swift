@@ -17,7 +17,7 @@ enum QuantumWatcherCLI {
     private static let userNodePaths: [String] = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var paths: [String] = []
-        for dir in ["\(home)/.volta/bin", "\(home)/.npm-global/bin", "\(home)/.asdf/shims"] {
+        for dir in ["\(home)/.volta/bin", "\(home)/.npm-global/bin", "\(home)/.asdf/shims", "\(home)/node/bin"] {
             paths.append(dir)
         }
         let nvmDir = ProcessInfo.processInfo.environment["NVM_DIR"] ?? "\(home)/.nvm"
