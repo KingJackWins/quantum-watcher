@@ -49,3 +49,6 @@ src/summit.ts
 
 # Agent worktrees (exe-os)
 /.worktrees/
+
+# Employee task assignments (private)
+/exe/
