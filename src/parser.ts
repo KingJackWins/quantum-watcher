@@ -12,12 +12,14 @@ import {
   type CachedCall,
   type CachedFile,
   type CachedTurn,
+  type ClaudeMarker,
   type ProviderSection,
   type SessionCache,
   cleanupOrphanedTempFiles,
   computeEnvFingerprint,
   DURABLE_PROVIDER_NAMES,
   fingerprintFile,
+  isSaveableCachedFile,
   loadCache,
   reconcileFile,
   saveCache,
@@ -1140,7 +1142,7 @@ function parseApiCall(entry: JournalEntry): ParsedApiCall | null {
   })
 }
 
-function dedupeStreamingMessageIds(entries: JournalEntry[]): JournalEntry[] {
+export function dedupeStreamingMessageIds(entries: JournalEntry[]): JournalEntry[] {
   const firstIdxById = new Map<string, number>()
   const lastIdxById = new Map<string, number>()
   for (let i = 0; i < entries.length; i++) {
@@ -1164,7 +1166,7 @@ function dedupeStreamingMessageIds(entries: JournalEntry[]): JournalEntry[] {
   return result
 }
 
-function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>): ParsedTurn[] {
+export function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>): ParsedTurn[] {
   const turns: ParsedTurn[] = []
   let currentUserMessage = ''
   let currentCalls: ParsedApiCall[] = []
@@ -1207,6 +1209,111 @@ function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>): Parse
   }
 
   return turns
+}
+
+// ── Claude cross-file dedup, split into a pure per-file part + a replay ──
+//
+// Base ran `groupIntoTurns(entries, seenMsgIds)` per file, in discovery order,
+// with one `seenMsgIds` shared by every file of the run, and cached the RESULT.
+// That made a file's cache entry depend on which files were scanned before it
+// (i.e. on the CLAUDE_CONFIG_DIR selection). Here the per-file part is cached
+// (`groupIntoClaudeSegments`: no shared state) and the shared-state part
+// (`replayClaudeDedup`) runs fresh on every run, over the files the current
+// selection discovered, in discovery order. Composition is exactly
+// `groupIntoTurns` (tests/claude-cache-selection.test.ts proves it differentially):
+//  - a segment starts at every user entry with non-blank text (or at the start
+//    of the file) and owns the assistant entries up to the next one;
+//  - each assistant entry with a message id is skipped if the id was already
+//    seen, otherwise the id is marked seen BEFORE its call is parsed, so a call
+//    that throws still marks its id, and the throw aborts the file;
+//  - a segment becomes a turn iff it keeps at least one call.
+
+type ClaudeSegmentItem = { id: string | null; call?: ParsedApiCall; threw?: true }
+type ClaudeSegment = { userMessage: string; timestamp: string; sessionId: string; items: ClaudeSegmentItem[] }
+
+export function groupIntoClaudeSegments(entries: JournalEntry[]): ClaudeSegment[] {
+  const segments: ClaudeSegment[] = []
+  let current: ClaudeSegment = { userMessage: '', timestamp: '', sessionId: '', items: [] }
+  for (const entry of entries) {
+    if (entry.type === 'user') {
+      const text = getUserMessageText(entry)
+      if (text.trim()) {
+        if (current.items.length > 0) segments.push(current)
+        current = { userMessage: text, timestamp: entry.timestamp ?? '', sessionId: entry.sessionId ?? '', items: [] }
+      }
+    } else if (entry.type === 'assistant') {
+      const id = getMessageId(entry)
+      let call: ParsedApiCall | null
+      try {
+        call = parseApiCall(entry)
+      } catch {
+        current.items.push({ id, threw: true })
+        continue
+      }
+      // An entry with neither an id nor a call is a no-op in groupIntoTurns.
+      if (call) current.items.push({ id, call })
+      else if (id) current.items.push({ id })
+    }
+  }
+  if (current.items.length > 0) segments.push(current)
+  return segments
+}
+
+/// Cache form of the segments: `turns` holds every call before cross-file dedup
+/// (a segment with no call is kept as a turn with no calls so markers can name
+/// it); `markers` places the assistant entries that are not plain calls:
+/// kind 1 = its call parsing threw, kind 0 = it has a message id but no call.
+/// Kind 0 cannot occur today (compactEntry drops the message, and so the id, of
+/// any assistant entry lacking usage or model, which is exactly when parseApiCall
+/// returns null), but it is represented rather than assumed away.
+export function claudeSegmentsToCache(segments: ClaudeSegment[]): { turns: CachedTurn[]; markers?: ClaudeMarker[] } {
+  const turns: CachedTurn[] = []
+  const markers: ClaudeMarker[] = []
+  for (const seg of segments) {
+    const calls: CachedCall[] = []
+    for (const item of seg.items) {
+      if (item.threw || !item.call) { markers.push([turns.length, calls.length, item.id, item.threw ? 1 : 0]); continue }
+      const cached = apiCallToCachedCall(item.call)
+      if (item.id === null) cached.noId = true
+      calls.push(cached)
+    }
+    turns.push({ timestamp: seg.timestamp, sessionId: seg.sessionId, userMessage: seg.userMessage.slice(0, 2000), calls })
+  }
+  return markers.length > 0 ? { turns, markers } : { turns }
+}
+
+/// Apply base's cross-file dedup to one cached (pre-dedup) Claude file, in
+/// order, against the run's shared `seen` set. Returns the turns base would have
+/// cached for this file, or null when base would have recorded the file as
+/// failed (contributing nothing) — in which case `seen` holds exactly the ids
+/// base had marked before failing.
+export function replayClaudeDedup(file: CachedFile, seen: Set<string>): CachedTurn[] | null {
+  const markers = file.markers ?? []
+  let mi = 0
+  const out: CachedTurn[] = []
+  for (let t = 0; t < file.turns.length; t++) {
+    const turn = file.turns[t]!
+    const kept: CachedCall[] = []
+    for (let i = 0; i <= turn.calls.length; i++) {
+      while (mi < markers.length && markers[mi]![0] === t && markers[mi]![1] === i) {
+        const [, , id, kind] = markers[mi]!
+        mi++
+        if (id && seen.has(id)) continue
+        if (id) seen.add(id)
+        if (kind === 1) return null
+      }
+      if (i === turn.calls.length) break
+      const call = turn.calls[i]!
+      // A call's message id IS its deduplicationKey (parseApiCall: msg.id ?? ...).
+      const id = call.noId ? null : call.deduplicationKey
+      if (id && seen.has(id)) continue
+      if (id) seen.add(id)
+      kept.push(call)
+    }
+    if (kept.length > 0) out.push(kept.length === turn.calls.length ? turn : { ...turn, calls: kept })
+  }
+  if (file.failed) return null
+  return out
 }
 
 /**
@@ -1515,35 +1622,52 @@ async function scanProjectDirs(
   const allDiscoveredFiles = new Set<string>()
 
   type FileInfo = { dirName: string; fp: NonNullable<Awaited<ReturnType<typeof fingerprintFile>>> }
-  const unchangedFiles: Array<{ filePath: string; dirName: string; cached: CachedFile }> = []
-  const changedFiles: Array<{ filePath: string; info: FileInfo }> = []
+  // Every discovery occurrence, in discovery order (base cold order). One path
+  // can be discovered more than once in a run (overlapping config dirs: a
+  // config dir nested under another's `projects/<p>/subagents/`); base parsed it
+  // once per occurrence, so every occurrence is replayed below.
+  const discoveredFiles: Array<{ filePath: string; dirName: string }> = []
+  // The dir name of a path's LAST occurrence: base's last parse of the path
+  // wrote its entry, including the dir-name fallback of canonicalProjectName.
+  const lastDirName = new Map<string, string>()
+  const changedFiles = new Map<string, FileInfo>()
 
   for (const { path: dirPath, name: dirName } of dirs) {
     const jsonlFiles = await collectJsonlFiles(dirPath)
     for (const filePath of jsonlFiles) {
       allDiscoveredFiles.add(filePath)
-      const fp = await fingerprintFile(filePath)
+      const fp = await fingerprintFile(filePath, { ctime: true })
       if (!fp) continue
+      discoveredFiles.push({ filePath, dirName })
+      lastDirName.set(filePath, dirName)
 
-      const action = reconcileFile(fp, section.files[filePath])
-      if (action.action === 'unchanged') {
-        unchangedFiles.push({ filePath, dirName, cached: section.files[filePath]! })
-      } else {
-        changedFiles.push({ filePath, info: { dirName, fp } })
+      // Base's reuse check (dev, ino, mtime, size) plus ctime: a same-size
+      // in-place rewrite that restores mtime still moves ctime. Entries without
+      // a recorded ctime are never reused.
+      const cached = section.files[filePath]
+      const action = reconcileFile(fp, cached)
+      const reusable = action.action === 'unchanged' && cached?.fingerprint.ctimeMs !== undefined && cached.fingerprint.ctimeMs === fp.ctimeMs
+      if (!reusable && !changedFiles.has(filePath)) {
+        changedFiles.set(filePath, { dirName, fp })
       }
     }
   }
 
-  // Pre-seed dedup set from cached (unchanged) files
-  for (const { cached } of unchangedFiles) {
-    for (const turn of cached.turns) {
-      for (const call of turn.calls) {
-        seenMsgIds.add(call.deduplicationKey)
-      }
-    }
+  // Entries this run parsed that would not survive a save + load (a value the
+  // cache validator rejects, e.g. a call with `usage.speed: "invalid"`, or a
+  // non-string session id). Base kept such values only when they were not
+  // suppressed as duplicates, and a saved one then made the loader reject the
+  // whole cache. Here they are used for this run only and never saved, so the
+  // file is simply re-parsed next run.
+  const volatileEntries = new Map<string, CachedFile>()
+  const store = (filePath: string, entry: CachedFile): void => {
+    if (isSaveableCachedFile(entry)) section.files[filePath] = entry
+    else volatileEntries.set(filePath, entry)
   }
 
-  for (const { filePath, info } of changedFiles) {
+  // Parse changed files into their pre-dedup cache form. No shared state is read
+  // or written here: an entry is a function of its transcript alone.
+  for (const [filePath, info] of changedFiles) {
     delete section.files[filePath]
 
     try {
@@ -1551,17 +1675,29 @@ async function scanProjectDirs(
       const entries = await parseClaudeEntries(filePath, tracker)
       if (!entries) continue
 
-      const turns = groupIntoTurns(dedupeStreamingMessageIds(entries), seenMsgIds)
-      const cwd = extractCanonicalCwd(entries)
-      const canonical = (cwd && !isCoworkSession(cwd, filePath)) ? await resolveCanonicalProjectPath(cwd) : undefined
-      section.files[filePath] = {
-        fingerprint: info.fp,
-        lastCompleteLineOffset: tracker.lastCompleteLineOffset,
-        canonicalCwd: canonical?.path,
-        canonicalProjectName: canonical?.isWorktree ? projectNameFromPath(canonical.path, info.dirName) : undefined,
-        mcpInventory: extractMcpInventory(entries),
-        turns: turns.map(parsedTurnToCachedTurn),
-        agentType: await readAgentType(filePath),
+      const { turns, markers } = claudeSegmentsToCache(groupIntoClaudeSegments(dedupeStreamingMessageIds(entries)))
+      try {
+        const cwd = extractCanonicalCwd(entries)
+        const canonical = (cwd && !isCoworkSession(cwd, filePath)) ? await resolveCanonicalProjectPath(cwd) : undefined
+        store(filePath, {
+          fingerprint: info.fp,
+          lastCompleteLineOffset: tracker.lastCompleteLineOffset,
+          canonicalCwd: canonical?.path,
+          canonicalProjectName: canonical?.isWorktree ? projectNameFromPath(canonical.path, info.dirName) : undefined,
+          mcpInventory: extractMcpInventory(entries),
+          turns,
+          ...(markers ? { markers } : {}),
+          agentType: await readAgentType(filePath),
+        })
+      } catch (err) {
+        // Base reached this point only after groupIntoTurns had marked the file's
+        // ids seen; it then recorded the file as failed. Keep the turns so the
+        // replay marks the same ids, and `failed` so it contributes nothing.
+        store(filePath, { fingerprint: info.fp, mcpInventory: [], turns, ...(markers ? { markers } : {}), failed: true })
+        warnProviderParseFailure('claude', filePath, err)
+      }
+      if (markers?.some(m => m[3] === 1)) {
+        warnProviderParseFailure('claude', filePath, new Error('an assistant entry failed to parse'))
       }
       ;(diskCache as { _dirty?: boolean })._dirty = true
     } catch (err) {
@@ -1569,34 +1705,45 @@ async function scanProjectDirs(
       // would empty the daily-cache backfill and wipe the trend/history (issue #441,
       // same isolation the provider path already has). Record a failure marker keyed
       // by the current fingerprint so it isn't re-read and re-thrown every run; it
-      // re-parses only if the file changes.
+      // re-parses only if the file changes. Reading failed before any id was seen.
       section.files[filePath] = { fingerprint: info.fp, mcpInventory: [], turns: [], failed: true }
       ;(diskCache as { _dirty?: boolean })._dirty = true
       warnProviderParseFailure('claude', filePath, err)
     }
   }
 
+  // The section is shared by every selection, so a file this run did not
+  // discover may belong to another selection: drop an entry only when its
+  // transcript no longer exists. Retaining an entry can never change output —
+  // it is used only when its path is discovered AND its fingerprint matches.
   if (dirs.length > 0) {
     for (const cachedPath of Object.keys(section.files)) {
-      if (!allDiscoveredFiles.has(cachedPath)) {
-        delete section.files[cachedPath]
-        ;(diskCache as { _dirty?: boolean })._dirty = true
-      }
+      if (allDiscoveredFiles.has(cachedPath)) continue
+      if (await stat(cachedPath).then(() => true, () => false)) continue
+      delete section.files[cachedPath]
+      ;(diskCache as { _dirty?: boolean })._dirty = true
     }
   }
 
   const projectMap = new Map<string, { project: string; projectPath: string; sessions: SessionSummary[]; dirNames: Set<string> }>()
 
-  const allFiles = [
-    ...unchangedFiles.map(f => ({ filePath: f.filePath, dirName: f.dirName })),
-    ...changedFiles.map(f => ({ filePath: f.filePath, dirName: f.info.dirName })),
-  ]
+  // Cross-file dedup, fresh every run: base's rule, base cold's order. Base did
+  // all of its dedup while parsing, once per occurrence, before aggregating, and
+  // a path's last parse overwrote its entry; so replay every occurrence first,
+  // keeping the last result per path, then aggregate every occurrence with it.
+  const replayed = new Map<string, CachedTurn[] | null>()
+  for (const { filePath } of discoveredFiles) {
+    const cachedFile = volatileEntries.get(filePath) ?? section.files[filePath]
+    replayed.set(filePath, cachedFile ? replayClaudeDedup(cachedFile, seenMsgIds) : null)
+  }
 
-  for (const { filePath, dirName } of allFiles) {
-    const cachedFile = section.files[filePath]
-    if (!cachedFile || cachedFile.turns.length === 0) continue
+  for (const { filePath, dirName } of discoveredFiles) {
+    const cachedFile = volatileEntries.get(filePath) ?? section.files[filePath]
+    if (!cachedFile) continue
+    const turns = replayed.get(filePath)
+    if (!turns || turns.length === 0) continue
 
-    let classifiedTurns = cachedFile.turns.map(cachedTurnToClassified)
+    let classifiedTurns = turns.map(cachedTurnToClassified)
 
     if (dateRange) {
       classifiedTurns = classifiedTurns.filter(turn => {
@@ -1612,7 +1759,11 @@ async function scanProjectDirs(
 
     const sessionId = basename(filePath, '.jsonl')
     const projectPath = cachedFile.canonicalCwd ?? unsanitizePath(dirName)
-    const projectName = cachedFile.canonicalProjectName ?? dirName
+    // canonicalProjectName = projectNameFromPath(canonicalCwd, <dir name>) for a
+    // worktree; base computed it with the dir name of the path's last parse.
+    const projectName = cachedFile.canonicalProjectName !== undefined && cachedFile.canonicalCwd !== undefined
+      ? projectNameFromPath(cachedFile.canonicalCwd, lastDirName.get(filePath) ?? dirName)
+      : cachedFile.canonicalProjectName ?? dirName
     const mcpInv = cachedFile.mcpInventory.length > 0 ? cachedFile.mcpInventory : undefined
     const session = buildSessionSummary(sessionId, projectName, classifiedTurns, mcpInv)
     session.agentType = cachedFile.agentType

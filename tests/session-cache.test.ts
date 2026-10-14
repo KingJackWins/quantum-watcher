@@ -169,10 +169,24 @@ describe('computeEnvFingerprint', () => {
   })
 
   it('changes when env var changes', () => {
+    const prev = process.env['CODEX_HOME']
+    const before = computeEnvFingerprint('codex')
+    process.env['CODEX_HOME'] = '/tmp/different'
+    const after = computeEnvFingerprint('codex')
+    if (prev === undefined) delete process.env['CODEX_HOME']; else process.env['CODEX_HOME'] = prev
+    expect(before).not.toBe(after)
+  })
+
+  it('does not change for claude when the config-dir selection changes (entries are pre-dedup, selection-independent)', () => {
+    const prevDir = process.env['CLAUDE_CONFIG_DIR']
+    const prevDirs = process.env['CLAUDE_CONFIG_DIRS']
     const before = computeEnvFingerprint('claude')
     process.env['CLAUDE_CONFIG_DIR'] = '/tmp/different'
+    process.env['CLAUDE_CONFIG_DIRS'] = '/tmp/a:/tmp/b'
     const after = computeEnvFingerprint('claude')
-    expect(before).not.toBe(after)
+    if (prevDir === undefined) delete process.env['CLAUDE_CONFIG_DIR']; else process.env['CLAUDE_CONFIG_DIR'] = prevDir
+    if (prevDirs === undefined) delete process.env['CLAUDE_CONFIG_DIRS']; else process.env['CLAUDE_CONFIG_DIRS'] = prevDirs
+    expect(before).toBe(after)
   })
 
   it('returns stable hash for unknown provider (no env vars)', () => {

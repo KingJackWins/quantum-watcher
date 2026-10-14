@@ -50,6 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var codexQuotaRefreshTask: Task<Bool, Never>?
     private var refreshLoopHeartbeatAt: Date = .distantPast
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // A shared CLI run lives in a detached task; don't leave it, or anything it
+        // started, running after the app is gone. SIGKILLs every CLI process group
+        // synchronously, before this method returns (no SIGTERM grace, no timer).
+        DataClient.terminateAllChildren()
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Set accessory policy before the app's focus chain forms. On macOS Tahoe
         // (26.x), setting it after didFinishLaunching causes ghost status items

@@ -79,18 +79,34 @@ enum QuantumWatcherCLI {
         return value
     }
 
-    /// Builds a `Process` that runs the CLI with the given subcommand args. Uses `/usr/bin/env`
-    /// so PATH lookup happens without involving a shell, and augments PATH with Homebrew
-    /// defaults. Caller sets stdout/stderr pipes and calls `run()`.
-    static func makeProcess(subcommand: [String]) -> Process {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    /// What to spawn for one CLI run. DataClient's refresh path spawns it with
+    /// posix_spawn in a process group of its own (so a timeout or quit can signal
+    /// every descendant) at user-initiated QoS. Uses `/usr/bin/env` so PATH lookup
+    /// happens without involving a shell, and augments PATH with Homebrew defaults.
+    struct Command {
+        let executable: String
+        let arguments: [String]
+        let environment: [String: String]
+    }
+
+    static func makeCommand(subcommand: [String]) -> Command {
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = augmentedPath(environment["PATH"] ?? "")
-        process.environment = environment
         // `env --` treats everything following as argv, not VAR=val pairs -- guards against an
         // argument accidentally resembling an env assignment.
-        process.arguments = ["--"] + baseArgv() + subcommand
+        return Command(executable: "/usr/bin/env",
+                       arguments: ["--"] + baseArgv() + subcommand,
+                       environment: environment)
+    }
+
+    /// Builds a `Process` that runs the CLI with the given subcommand args, for the
+    /// callers other than the refresh path. Caller sets stdout/stderr pipes and calls `run()`.
+    static func makeProcess(subcommand: [String]) -> Process {
+        let command = makeCommand(subcommand: subcommand)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command.executable)
+        process.environment = command.environment
+        process.arguments = command.arguments
         // The menubar runs as an accessory app with no foreground window, and macOS
         // background-throttles accessory apps and their children. Without this lift the
         // quantum-watcher subprocess parses 5-10x slower than the same command run from a

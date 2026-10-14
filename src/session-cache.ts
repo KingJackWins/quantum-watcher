@@ -34,6 +34,10 @@ export type CachedCall = {
   project?: string
   projectPath?: string
   toolSequence?: ToolCall[][]
+  // Claude only: the call's transcript entry carried no message id, so its
+  // deduplicationKey is the synthetic `claude:<timestamp>` and it takes no part
+  // in cross-file message-id dedup (base `groupIntoTurns` only dedups on ids).
+  noId?: boolean
 }
 
 export type CachedTurn = {
@@ -48,7 +52,13 @@ export type FileFingerprint = {
   ino: number
   mtimeMs: number
   sizeBytes: number
+  // Claude only: status-change time. Any write, including one that restores
+  // mtime with utimes, moves it, so the Claude reuse check also requires it to
+  // match (an in-place same-size rewrite with mtime restored is re-read).
+  ctimeMs?: number
 }
+
+export type ClaudeMarker = [number, number, string | null, 0 | 1]
 
 export type CachedFile = {
   fingerprint: FileFingerprint
@@ -66,6 +76,14 @@ export type CachedFile = {
   // is re-parsed only when the file changes (fingerprint differs). Carries no
   // turns, so it contributes no usage. (issue #441 follow-up)
   failed?: boolean
+  // Claude only. Claude entries are stored BEFORE cross-file dedup (a pure
+  // function of the transcript); `replayClaudeDedup` in parser.ts applies the
+  // dedup fresh every run. Each marker places an assistant entry that is not a
+  // plain call: [turn index, position before that call index, message id or
+  // null, kind] with kind 1 = its call parsing threw (base then recorded the
+  // whole file as failed after marking the ids seen so far) and kind 0 = an id
+  // with no call (marks the id seen). Markers are in transcript order.
+  markers?: ClaudeMarker[]
 }
 
 export type ProviderSection = {
@@ -87,8 +105,10 @@ export const CACHE_VERSION = 4
 const CACHE_FILE = 'session-cache.json'
 const TEMP_FILE_MAX_AGE_MS = 5 * 60 * 1000
 
+// Claude is deliberately absent: its entries are stored before cross-file dedup,
+// so an entry depends only on its own transcript, never on which config dirs a
+// run selected. Every selection (menu bar app, shells) shares one section.
 const PROVIDER_ENV_VARS: Record<string, string[]> = {
-  claude: ['CLAUDE_CONFIG_DIRS', 'CLAUDE_CONFIG_DIR'],
   codex: ['CODEX_HOME'],
   droid: ['FACTORY_DIR'],
   cursor: ['XDG_DATA_HOME'],
@@ -107,7 +127,7 @@ const PROVIDER_ENV_VARS: Record<string, string[]> = {
 export const DURABLE_PROVIDER_NAMES: ReadonlySet<string> = new Set(['copilot'])
 
 const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
-  claude: 'cowork-space-grouping-v1',
+  claude: 'cowork-space-grouping-v1+pre-dedup-v1',
   cline: 'worktree-project-grouping-v1',
   copilot: 'otel-durable-v1',
   'ibm-bob': 'worktree-project-grouping-v1',
@@ -175,6 +195,7 @@ function validateFingerprint(fp: unknown): fp is FileFingerprint {
   if (!fp || typeof fp !== 'object') return false
   const f = fp as Record<string, unknown>
   return isNum(f['dev']) && isNum(f['ino']) && isNum(f['mtimeMs']) && isNum(f['sizeBytes'])
+    && isOptionalNum(f['ctimeMs'])
 }
 
 function validateUsage(u: unknown): u is CachedUsage {
@@ -203,6 +224,7 @@ function validateCall(c: unknown): c is CachedCall {
     && isOptionalString(o['projectPath'])
     && (o['toolSequence'] === undefined || (Array.isArray(o['toolSequence']) && (o['toolSequence'] as unknown[]).every(s => isToolCallArray(s))))
     && validateUsage(o['usage'])
+    && (o['noId'] === undefined || typeof o['noId'] === 'boolean')
 }
 
 function validateTurn(t: unknown): t is CachedTurn {
@@ -215,6 +237,14 @@ function validateTurn(t: unknown): t is CachedTurn {
     && (o['calls'] as unknown[]).every(validateCall)
 }
 
+/// True when `f` would survive a save + load: the loader rejects the WHOLE cache
+/// if any entry fails this, so an entry that fails must never be saved. This
+/// checks a superset of base's per-entry validation, so an entry that passes
+/// also loads under base's reader.
+export function isSaveableCachedFile(f: unknown): f is CachedFile {
+  return validateCachedFile(f)
+}
+
 function validateCachedFile(f: unknown): f is CachedFile {
   if (!f || typeof f !== 'object') return false
   const o = f as Record<string, unknown>
@@ -225,6 +255,24 @@ function validateCachedFile(f: unknown): f is CachedFile {
     && isStringArray(o['mcpInventory'])
     && Array.isArray(o['turns'])
     && (o['turns'] as unknown[]).every(validateTurn)
+    && (o['markers'] === undefined || validateMarkers(o['markers'], o['turns'] as CachedTurn[]))
+}
+
+function validateMarkers(v: unknown, turns: CachedTurn[]): boolean {
+  if (!Array.isArray(v)) return false
+  let prevT = 0, prevI = 0
+  for (const m of v) {
+    if (!Array.isArray(m) || m.length !== 4) return false
+    const [t, i, id, kind] = m as unknown[]
+    if (!Number.isInteger(t) || !Number.isInteger(i)) return false
+    const ti = t as number, ii = i as number
+    if (ti < 0 || ti >= turns.length || ii < 0 || ii > turns[ti]!.calls.length) return false
+    if (ti < prevT || (ti === prevT && ii < prevI)) return false
+    if (!(id === null || typeof id === 'string')) return false
+    if (kind !== 0 && kind !== 1) return false
+    prevT = ti; prevI = ii
+  }
+  return true
 }
 
 function validateProviderSection(s: unknown): s is ProviderSection {
@@ -281,9 +329,10 @@ export async function saveCache(cache: SessionCache): Promise<void> {
 
 // ── File Fingerprinting ────────────────────────────────────────────────
 
-export async function fingerprintFile(filePath: string): Promise<FileFingerprint | null> {
+export async function fingerprintFile(filePath: string, opts?: { ctime?: boolean }): Promise<FileFingerprint | null> {
   try {
     const s = await stat(filePath)
+    if (opts?.ctime) return { dev: s.dev, ino: s.ino, mtimeMs: s.mtimeMs, sizeBytes: s.size, ctimeMs: s.ctimeMs }
     return { dev: s.dev, ino: s.ino, mtimeMs: s.mtimeMs, sizeBytes: s.size }
   } catch {
     // Providers encode extra context into source paths using virtual suffixes:
