@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 
 import { DAILY_CACHE_VERSION, DailyCacheReadError, emptyCache, type DailyCache, type DailyEntry } from '../src/daily-cache.js'
-import { computeBreakdownCoverage, mergeHistoryDays, resolveHistory, sumHistoryTotals } from '../src/usage-aggregator.js'
+import { computeBreakdownCoverage, incompleteCoveredFrom, isShortfall, mergeHistoryDays, resolveHistory, sumHistoryTotals } from '../src/usage-aggregator.js'
 
 const DAY_MS = 24 * 3600_000
 
@@ -141,7 +141,8 @@ describe('period totals = sum of the daily history', () => {
       expect(all.current.topModels.reduce((s, m) => s + m.cost, 0)).toBeCloseTo(all.current.cost, 8)
       expect(all.current.providers['claude']).toBeCloseTo(10 + parsedCost, 8)
       expect(all.current.providers['codex']).toBeCloseTo(5, 8)
-      expect(all.current.breakdownCoverage).toEqual({ from: dateIn(todayStart - 2 * DAY_MS, 0), to: dateIn(todayStart, 0) })
+      // The deleted day 40 days ago is short; coverage starts the day after it.
+      expect(all.current.breakdownCoverage).toEqual({ from: dateIn(todayStart - 39 * DAY_MS, 0), to: dateIn(todayStart, 0) })
     } finally {
       await rm(home, { recursive: true, force: true })
     }
@@ -154,6 +155,8 @@ describe('period totals = sum of the daily history', () => {
       seedOldDays: [{ daysAgo: 40, providers: { claude: 10 } }],
     })
     try {
+      const st = JSON.parse(runCli(['status', '--format', 'json'], home, 'UTC').stdout) as { historyIncomplete: unknown }
+      expect(st.historyIncomplete).toBeNull()
       for (const period of ['week', '30days']) {
         const p = menubar(home, 'UTC', period)
         const r = runCli(['report', '--format', 'json', '--period', period], home, 'UTC')
@@ -266,17 +269,52 @@ describe('mergeHistoryDays / sumHistoryTotals / computeBreakdownCoverage', () =>
     expect(days.map(d => d.date)).toEqual(['2026-09-01', '2026-10-15'])
   })
 
-  it('decides breakdown coverage by dates, not by a cost ratio', () => {
+  it('coverage starts the day after the last short day (saved > transcripts by more than max($1, 1%))', () => {
     const all = () => true
-    const hist = [{ date: '2026-09-01', cost: 100, calls: 1 }, { date: '2026-10-16', cost: 10_000, calls: 50 }]
-    // The verdict's case: $100 on a deleted day + $10,000 today must still name the range.
-    expect(computeBreakdownCoverage(hist, [{ date: '2026-10-16', calls: 50 }], all, '2026-10-16')).toEqual({ from: '2026-10-16', to: '2026-10-16' })
-    // Every day with recorded spend has transcripts from its start: covered.
-    expect(computeBreakdownCoverage(hist, [{ date: '2026-09-01', calls: 1 }], all, '2026-10-16')).toBeNull()
-    // No transcript call at all: nothing covered.
+    // The verdict's case: $100 on a deleted day + $10,000 today must name the range.
+    const hist = [{ date: '2026-09-01', cost: 100 }, { date: '2026-10-16', cost: 10_000 }]
+    expect(computeBreakdownCoverage(hist, [{ date: '2026-10-16', cost: 10_000 }], all, '2026-10-16')).toEqual({ from: '2026-09-02', to: '2026-10-16' })
+    // Everything matches: complete, no line.
+    expect(computeBreakdownCoverage(hist, hist, all, '2026-10-16')).toBeNull()
+    // Nothing parsed at all: the last short day is the last day -> no covered day.
     expect(computeBreakdownCoverage(hist, [], all, '2026-10-16')).toEqual({ from: null, to: '2026-10-16' })
-    // Out-of-scope history days do not count.
-    expect(computeBreakdownCoverage(hist, [{ date: '2026-10-16', calls: 50 }], d => d >= '2026-10-01', '2026-10-16')).toBeNull()
+    // Out-of-scope short days do not count.
+    expect(computeBreakdownCoverage(hist, [{ date: '2026-10-16', cost: 10_000 }], d => d >= '2026-10-01', '2026-10-16')).toBeNull()
+  })
+
+  it('(a) a surviving $0.18 call on the first saved day does not make coverage complete', () => {
+    const saved = [{ date: '2026-04-20', cost: 0.18 }, { date: '2026-05-10', cost: 31.58 }, { date: '2026-09-15', cost: 1080 }, { date: '2026-09-16', cost: 1599 }, { date: '2026-10-16', cost: 60 }]
+    const transcripts = [{ date: '2026-04-20', cost: 0.18 }, { date: '2026-09-15', cost: 572 }, { date: '2026-09-16', cost: 1590 }, { date: '2026-10-16', cost: 60 }]
+    expect(computeBreakdownCoverage(saved, transcripts, () => true, '2026-10-16')).toEqual({ from: '2026-09-16', to: '2026-10-16' })
+  })
+
+  it('(b) a day where transcripts exceed the saved row does not start coverage late', () => {
+    const saved = [{ date: '2026-09-01', cost: 500 }, { date: '2026-10-09', cost: 740 }, { date: '2026-10-10', cost: 762 }, { date: '2026-10-16', cost: 60 }]
+    const transcripts = [{ date: '2026-09-01', cost: 100 }, { date: '2026-10-09', cost: 762 }, { date: '2026-10-10', cost: 835 }, { date: '2026-10-16', cost: 60 }]
+    expect(computeBreakdownCoverage(saved, transcripts, () => true, '2026-10-16')).toEqual({ from: '2026-09-02', to: '2026-10-16' })
+    expect(computeBreakdownCoverage(saved.slice(1), transcripts.slice(1), () => true, '2026-10-16')).toBeNull()
+  })
+
+  it('(c) tolerance edges: $1 floor and 1% of the saved day', () => {
+    // $1 floor (saved $50: 1% = $0.50 < $1)
+    expect(isShortfall(50, 49.01)).toBe(false) // short by $0.99
+    expect(isShortfall(50, 49)).toBe(false) // exactly $1 is not more than $1
+    expect(isShortfall(50, 48.98)).toBe(true) // short by $1.02
+    // 1% (saved $1,000: 1% = $10 > $1)
+    expect(isShortfall(1000, 990.5)).toBe(false) // short by $9.50
+    expect(isShortfall(1000, 990)).toBe(false) // exactly 1%
+    expect(isShortfall(1000, 989.5)).toBe(true) // short by $10.50
+    const all = () => true
+    expect(computeBreakdownCoverage([{ date: '2026-10-01', cost: 1000 }, { date: '2026-10-16', cost: 1 }], [{ date: '2026-10-01', cost: 990.5 }, { date: '2026-10-16', cost: 1 }], all, '2026-10-16')).toBeNull()
+    expect(computeBreakdownCoverage([{ date: '2026-10-01', cost: 1000 }, { date: '2026-10-16', cost: 1 }], [{ date: '2026-10-01', cost: 989.5 }, { date: '2026-10-16', cost: 1 }], all, '2026-10-16')).toEqual({ from: '2026-10-02', to: '2026-10-16' })
+  })
+
+  it('an incomplete history dates its total by the same rule, else by the earliest transcript call', () => {
+    const all = () => true
+    const transcripts = [{ date: '2026-04-20', cost: 0.18, calls: 1 }, { date: '2026-10-12', cost: 800, calls: 10 }]
+    expect(incompleteCoveredFrom([{ date: '2026-04-20', cost: 0.18 }, { date: '2026-09-20', cost: 900 }], transcripts, all, '2026-10-16')).toBe('2026-09-21')
+    expect(incompleteCoveredFrom([], transcripts, all, '2026-10-16')).toBe('2026-04-20')
+    expect(incompleteCoveredFrom([], [], all, '2026-10-16')).toBeNull()
   })
 })
 
@@ -324,6 +362,12 @@ describe('incomplete history, custom ranges, cost per session (CLI)', () => {
       expect(sum.cost).toBeCloseTo(p.current.cost, 10)
       expect(sum.calls).toBe(p.current.calls)
       expect(await readFile(cachePath, 'utf-8')).toBe('{"version": 8, "days": [ truncated')
+      // status --format json carries the same field.
+      const st = runCli(['status', '--format', 'json'], home, 'UTC')
+      expect(st.status, st.stderr).toBe(0)
+      const stJson = JSON.parse(st.stdout) as { historyIncomplete: { reason: string; to: string } | null }
+      expect(stJson.historyIncomplete?.reason).toBe('unreadable')
+      expect(stJson.historyIncomplete?.to).toBe(dateIn(todayStart, 0))
     } finally {
       await rm(home, { recursive: true, force: true })
     }

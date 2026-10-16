@@ -11,7 +11,8 @@ import { toDateString } from './daily-cache.js'
 import { aggregateProjectsIntoDays, dateKey } from './day-aggregator.js'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
-import { buildPeriodData, buildMenubarPayloadForRange, historyTotalsForRange } from './usage-aggregator.js'
+import { buildPeriodData, buildMenubarPayloadForRange, historyStatusForRange } from './usage-aggregator.js'
+import type { HistoryIncompleteInfo } from './menubar-json.js'
 import { renderDashboard } from './dashboard.js'
 import { renderOverview } from './overview.js'
 import { runWebDashboard } from './web-dashboard.js'
@@ -662,11 +663,11 @@ program
       const hasProjectFilter = opts.project.length > 0 || opts.exclude.length > 0
       const monthHistory = hasProjectFilter
         ? null
-        : await historyTotalsForRange(getDateRange('month').range, pf, aggregateProjectsIntoDays(todayProjects))
-      if (monthHistory) {
-        monthData.cost = monthHistory.cost
-        monthData.calls = monthHistory.calls
-        monthData.savingsUSD = monthHistory.savingsUSD
+        : await historyStatusForRange(getDateRange('month').range, pf, aggregateProjectsIntoDays(todayProjects), aggregateProjectsIntoDays(monthProjects))
+      if (monthHistory?.totals) {
+        monthData.cost = monthHistory.totals.cost
+        monthData.calls = monthHistory.totals.calls
+        monthData.savingsUSD = monthHistory.totals.savingsUSD
       }
       const { code, rate } = getCurrency()
       const payload: {
@@ -674,12 +675,16 @@ program
         today: { cost: number; savings: number; calls: number }
         month: { cost: number; savings: number; calls: number }
         localModelSavings?: { today: number; month: number; callsToday: number; callsMonth: number }
+        /// Non-null when the saved daily history could not be used: `month`
+        /// then comes from surviving transcripts only (same field as menubar-json).
+        historyIncomplete: HistoryIncompleteInfo | null
         plan?: JsonPlanSummary
         plans?: JsonPlanSummaryMap
       } = {
         currency: code,
         today: { cost: Math.round(todayData.cost * rate * 100) / 100, savings: Math.round(todayData.savingsUSD * rate * 100) / 100, calls: todayData.calls },
         month: { cost: Math.round(monthData.cost * rate * 100) / 100, savings: Math.round(monthData.savingsUSD * rate * 100) / 100, calls: monthData.calls },
+        historyIncomplete: monthHistory?.historyIncomplete ?? null,
       }
       const savingsCallsToday = todayProjects.reduce((s, p) => s + p.sessions.reduce((s2, sess) => s2 + sess.turns.reduce((s3, turn) => s3 + turn.assistantCalls.reduce((s4, c) => s4 + (c.savingsUSD && c.savingsUSD > 0 ? 1 : 0), 0), 0), 0), 0)
       const savingsCallsMonth = monthProjects.reduce((s, p) => s + p.sessions.reduce((s2, sess) => s2 + sess.turns.reduce((s3, turn) => s3 + turn.assistantCalls.reduce((s4, c) => s4 + (c.savingsUSD && c.savingsUSD > 0 ? 1 : 0), 0), 0), 0), 0)
@@ -698,10 +703,16 @@ program
     const monthProjects2 = fp(await parseAllSessions(getDateRange('month').range, pf))
     clearSessionCache()
     const hasProjectFilter2 = opts.project.length > 0 || opts.exclude.length > 0
+    const monthDays2 = aggregateProjectsIntoDays(monthProjects2)
     const monthHistory2 = hasProjectFilter2
       ? null
-      : await historyTotalsForRange(getDateRange('month').range, pf, aggregateProjectsIntoDays(monthProjects2))
-    console.log(renderStatusBar(monthProjects2, monthHistory2 ? { cost: monthHistory2.cost, calls: monthHistory2.calls } : undefined))
+      : await historyStatusForRange(getDateRange('month').range, pf, monthDays2, monthDays2)
+    const incomplete2 = monthHistory2?.historyIncomplete ?? null
+    console.log(renderStatusBar(
+      monthProjects2,
+      monthHistory2?.totals ? { cost: monthHistory2.totals.cost, calls: monthHistory2.totals.calls } : undefined,
+      incomplete2 ? `Older days unavailable, month covers ${incomplete2.coveredFrom ?? 'recent days'} to ${incomplete2.to}` : undefined,
+    ))
   })
 
 program

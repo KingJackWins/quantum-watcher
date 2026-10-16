@@ -146,44 +146,109 @@ export function earliestParsedDay(parsedDays: Array<{ date: string; calls: numbe
   return earliest
 }
 
+/// A day counts as short when its saved spend exceeds the transcript spend by
+/// more than max($1, 1% of the saved spend).
+export const SHORTFALL_MIN_USD = 1
+export const SHORTFALL_SHARE = 0.01
+
+export function isShortfall(savedCost: number, transcriptCost: number): boolean {
+  return savedCost - transcriptCost > Math.max(SHORTFALL_MIN_USD, SHORTFALL_SHARE * savedCost)
+}
+
+function nextDayStr(day: string): string {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number]
+  return toDateString(new Date(y, m - 1, d + 1))
+}
+
 /**
- * Coverage is decided by dates. The transcript-derived breakdowns cover from
- * the earliest in-scope day that has any transcript call. If the saved history
- * has spend on any in-scope day before that (or there is no transcript call at
- * all), returns the covered range (`from` null = nothing covered); otherwise
- * null (the breakdowns cover every day that has recorded spend).
+ * Coverage start for the selected scope: the day AFTER the last in-scope day
+ * whose saved spend exceeds its transcript spend by more than
+ * max($1, 1% of that day's saved spend). Days where transcripts exceed the
+ * saved row (stale low rows) never count. Returns null when no day is short,
+ * i.e. the transcripts cover the whole period.
+ */
+export function coverageStartAfterShortfall(
+  savedDays: Array<{ date: string; cost: number }>,
+  transcriptDays: Array<{ date: string; cost: number }>,
+  inScope: (date: string) => boolean,
+): string | null {
+  const transcript = new Map<string, number>()
+  for (const d of transcriptDays) if (inScope(d.date)) transcript.set(d.date, (transcript.get(d.date) ?? 0) + d.cost)
+  const saved = new Map<string, number>()
+  for (const d of savedDays) if (inScope(d.date)) saved.set(d.date, (saved.get(d.date) ?? 0) + d.cost)
+  let lastShort: string | null = null
+  for (const [date, cost] of saved) {
+    if (isShortfall(cost, transcript.get(date) ?? 0) && (lastShort === null || date > lastShort)) lastShort = date
+  }
+  return lastShort === null ? null : nextDayStr(lastShort)
+}
+
+/**
+ * Breakdown coverage (see coverageStartAfterShortfall). null = complete, no
+ * line. `from` is null when the last short day is the period's last day, so
+ * no covered day remains.
  */
 export function computeBreakdownCoverage(
-  historyDays: Array<{ date: string; cost: number; calls: number }>,
-  parsedDays: Array<{ date: string; calls: number }>,
+  historyDays: Array<{ date: string; cost: number }>,
+  parsedDays: Array<{ date: string; cost: number }>,
   inScope: (date: string) => boolean,
   rangeEndStr: string,
 ): BreakdownCoverage | null {
-  const from = earliestParsedDay(parsedDays, inScope)
-  const uncovered = historyDays.some(d =>
-    inScope(d.date) && (d.cost > 0 || d.calls > 0) && (from === null || d.date < from))
-  return uncovered ? { from, to: rangeEndStr } : null
+  const start = coverageStartAfterShortfall(historyDays, parsedDays, inScope)
+  if (start === null) return null
+  return { from: start <= rangeEndStr ? start : null, to: rangeEndStr }
+}
+
+/**
+ * The "total covers X to Y" start for an incomplete history: the same
+ * shortfall rule against whatever saved days could still be read; when none
+ * shows a shortfall (e.g. the file is unreadable, so nothing is known about
+ * deleted days) it is the earliest day with any transcript call. null = no
+ * covered day.
+ */
+export function incompleteCoveredFrom(
+  savedDays: Array<{ date: string; cost: number }>,
+  transcriptDays: Array<{ date: string; cost: number; calls: number }>,
+  inScope: (date: string) => boolean,
+  rangeEndStr: string,
+): string | null {
+  const start = coverageStartAfterShortfall(savedDays, transcriptDays, inScope) ?? earliestParsedDay(transcriptDays, inScope)
+  return start !== null && start <= rangeEndStr ? start : null
+}
+
+export type HistoryStatus = {
+  /// History-derived totals, or null when the history is incomplete (the
+  /// caller keeps its transcript total for the whole figure).
+  totals: { cost: number; calls: number; savingsUSD: number } | null
+  historyIncomplete: HistoryIncompleteInfo | null
 }
 
 /**
  * Cost/calls/savings for a date range from the daily history (the same merge
  * as `history.daily`), for callers outside the menubar payload. `liveDays` are
- * the caller's live-parsed days; only today's entry is used. Returns null when
- * the saved history is incomplete (see resolveHistory), so the caller keeps its
- * transcript total for the whole figure.
+ * the caller's live-parsed days (only today's entry is used); `transcriptDays`
+ * are its parsed days for the range (used to date an incomplete history).
  */
-export async function historyTotalsForRange(
+export async function historyStatusForRange(
   range: DateRange,
   pf: string,
   liveDays: DailyEntry[],
-): Promise<{ cost: number; calls: number; savingsUSD: number } | null> {
+  transcriptDays: DailyEntry[],
+): Promise<HistoryStatus> {
   const now = new Date()
   const todayStr = toDateString(now)
   const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+  const startStr = toDateString(range.start)
+  const endStr = toDateString(range.end)
   const { cache, incomplete } = await resolveHistory(yesterdayStr)
-  if (incomplete) return null
-  const days = mergeHistoryDays(cache, liveDays, toDateString(range.start), toDateString(range.end), todayStr, yesterdayStr)
-  return sumHistoryTotals(days, pf)
+  const days = mergeHistoryDays(cache, liveDays, startStr, endStr, todayStr, yesterdayStr)
+  if (incomplete) {
+    const inScope = (d: string) => d >= startStr && d <= endStr
+    const saved = days.filter(d => d.date <= yesterdayStr).map(d => projectDay(d, pf))
+    const coveredFrom = incompleteCoveredFrom(saved, transcriptDays.map(d => projectDay(d, pf)), inScope, endStr)
+    return { totals: null, historyIncomplete: { ...incomplete, coveredFrom, to: endStr } }
+  }
+  return { totals: sumHistoryTotals(days, pf), historyIncomplete: null }
 }
 
 export type PeriodInfo = { range: DateRange; label: string }
@@ -278,14 +343,21 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     date >= rangeStartStr && date <= rangeEndStr && (!daysSelection || daysSelection.days.has(date))
   // Call-dated days from the transcripts of this period and scope.
   const parsedDays = aggregateProjectsIntoDays(scanProjects).filter(d => inScope(d.date))
-  const parsedCoverageFrom = earliestParsedDay(parsedDays.map(d => projectDay(d, pf)), inScope)
+  const savedInScope = mergeHistoryDays(cache, liveDays, rangeStartStr, rangeEndStr, todayStr, yesterdayStr).filter(d => inScope(d.date))
   const historyIncomplete: HistoryIncompleteInfo | null = history.incomplete
-    ? { ...history.incomplete, coveredFrom: parsedCoverageFrom, to: rangeEndStr }
+    ? {
+        ...history.incomplete,
+        coveredFrom: incompleteCoveredFrom(
+          savedInScope.filter(d => d.date <= yesterdayStr).map(d => projectDay(d, pf)),
+          parsedDays.map(d => projectDay(d, pf)),
+          inScope,
+          rangeEndStr,
+        ),
+        to: rangeEndStr,
+      }
     : null
   const useHistory = !hasProjectFilter && historyIncomplete === null
-  const periodDays = historyIncomplete
-    ? parsedDays
-    : mergeHistoryDays(cache, liveDays, rangeStartStr, rangeEndStr, todayStr, yesterdayStr).filter(d => inScope(d.date))
+  const periodDays = historyIncomplete ? parsedDays : savedInScope
   const breakdownCoverage: BreakdownCoverage | null = useHistory
     ? computeBreakdownCoverage(periodDays.map(d => projectDay(d, pf)), parsedDays.map(d => projectDay(d, pf)), inScope, rangeEndStr)
     : null
