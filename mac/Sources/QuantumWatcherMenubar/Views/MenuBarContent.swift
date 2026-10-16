@@ -51,6 +51,7 @@ struct MenuBarContent: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 8) {
                         HeroSection()
+                        HistoryIncompleteNote()
                         PeriodSegmentedControl()
                         if isFilteredEmpty {
                             EmptyProviderState(provider: store.selectedProvider, periodLabel: store.selectionLabel)
@@ -152,12 +153,8 @@ struct MenuBarContent: View {
 
 }
 
-/// One plain line under the breakdowns when they cover less than the period
-/// (transcripts are deleted after ~30 days; the totals above still count every
-/// recorded day).
-private struct BreakdownCoverageNote: View {
-    @Environment(AppStore.self) private var store
-
+/// Wording for the two coverage lines. Pure so it can be checked without UI.
+enum CoverageText {
     private static let ymd: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
@@ -174,20 +171,60 @@ private struct BreakdownCoverageNote: View {
         return f
     }()
 
-    private static func pretty(_ ymd: String) -> String {
-        if ymd == Self.ymd.string(from: Date()) { return "today" }
-        guard let d = Self.ymd.date(from: ymd) else { return ymd }
-        return Self.short.string(from: d)
+    static func pretty(_ day: String, today: Date = Date()) -> String {
+        if day == ymd.string(from: today) { return "today" }
+        guard let d = ymd.date(from: day) else { return day }
+        return short.string(from: d)
     }
+
+    private static func span(_ from: String, _ to: String, today: Date) -> String {
+        from == to ? "\(pretty(to, today: today)) only" : "\(pretty(from, today: today)) to \(pretty(to, today: today))"
+    }
+
+    static func breakdown(_ c: BreakdownCoverage, today: Date = Date()) -> String {
+        guard let from = c.from else { return "Breakdown covers only part of this period" }
+        return "Breakdown covers \(span(from, c.to, today: today))"
+    }
+
+    static func historyIncomplete(_ h: HistoryIncomplete, today: Date = Date()) -> String {
+        guard let from = h.coveredFrom else { return "Older days unavailable, total covers recent days only" }
+        return "Older days unavailable, total covers \(span(from, h.to, today: today))"
+    }
+}
+
+private struct CoverageLine: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 2)
+    }
+}
+
+/// One plain line under the breakdowns when they cover fewer days than the
+/// period (transcripts are deleted after ~30 days; the totals above still count
+/// every recorded day).
+private struct BreakdownCoverageNote: View {
+    @Environment(AppStore.self) private var store
 
     var body: some View {
         if let coverage = store.payload.current.breakdownCoverage {
-            Text(coverage.from.map { "Breakdown covers \(Self.pretty($0)) to \(Self.pretty(coverage.to))" }
-                 ?? "Breakdown covers only part of this period")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.top, 2)
+            CoverageLine(text: CoverageText.breakdown(coverage))
+        }
+    }
+}
+
+/// One plain line under the total when the saved daily history could not be
+/// used, so the total covers only days that transcripts still hold.
+private struct HistoryIncompleteNote: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        if let incomplete = store.payload.current.historyIncomplete {
+            CoverageLine(text: CoverageText.historyIncomplete(incomplete))
         }
     }
 }

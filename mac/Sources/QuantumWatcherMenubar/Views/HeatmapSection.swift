@@ -1031,9 +1031,7 @@ private struct PulseInsight: View {
                 PulseTile(label: "1-shot", value: oneShotText, color: oneShotColor)
                 PulseTile(
                     label: "Cost / session",
-                    value: payload.current.sessions > 0
-                        ? (payload.current.cost / Double(payload.current.sessions)).asCompactCurrency()
-                        : "—",
+                    value: payload.current.displayCostPerSession?.asCompactCurrency() ?? "—",
                     color: .secondary
                 )
             }

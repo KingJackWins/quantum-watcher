@@ -95,27 +95,52 @@ async function backupOldCache(path: string, version: number): Promise<void> {
   try { await rename(path, backupPath) } catch { /* best-effort */ }
 }
 
-export async function loadDailyCache(): Promise<DailyCache> {
+/// The saved daily history exists but could not be read or understood. It is
+/// the only record of days whose transcripts are gone, so it must never be
+/// treated as "empty" and rebuilt (and overwritten) from surviving transcripts.
+export class DailyCacheReadError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DailyCacheReadError'
+  }
+}
+
+/// Strict load used by hydration: a missing file is a fresh install (empty
+/// cache); a file too old to migrate is backed up and started fresh (the
+/// version migration path); any other read or parse failure throws.
+export async function loadDailyCacheStrict(): Promise<DailyCache> {
   const path = getCachePath()
   if (!existsSync(path)) return emptyCache()
+  let parsed: unknown
   try {
-    const raw = await readFile(path, 'utf-8')
-    const parsed: unknown = JSON.parse(raw)
-    if (isMigratableCache(parsed)) {
-      const migrated: DailyCache = {
-        version: DAILY_CACHE_VERSION,
-        savingsConfigHash: parsed.savingsConfigHash ?? '',
-        lastComputedDate: parsed.lastComputedDate,
-        days: migrateDays(parsed.days),
-      }
-      if (parsed.version < DAILY_CACHE_VERSION) {
-        await saveDailyCache(migrated).catch(() => {})
-      }
-      return migrated
+    parsed = JSON.parse(await readFile(path, 'utf-8'))
+  } catch (err) {
+    throw new DailyCacheReadError(`daily history at ${path} is unreadable: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (isMigratableCache(parsed)) {
+    const migrated: DailyCache = {
+      version: DAILY_CACHE_VERSION,
+      savingsConfigHash: parsed.savingsConfigHash ?? '',
+      lastComputedDate: parsed.lastComputedDate,
+      days: migrateDays(parsed.days),
     }
-    const oldVersion = (parsed as { version?: number })?.version
-    if (typeof oldVersion === 'number') await backupOldCache(path, oldVersion)
+    if (parsed.version < DAILY_CACHE_VERSION) {
+      await saveDailyCache(migrated).catch(() => {})
+    }
+    return migrated
+  }
+  const oldVersion = (parsed as { version?: number } | null)?.version
+  if (typeof oldVersion === 'number' && oldVersion < MIN_SUPPORTED_VERSION) {
+    await backupOldCache(path, oldVersion)
     return emptyCache()
+  }
+  throw new DailyCacheReadError(`daily history at ${path} has an unrecognized shape`)
+}
+
+/// Lenient load (read-only callers): any failure reads as an empty cache.
+export async function loadDailyCache(): Promise<DailyCache> {
+  try {
+    return await loadDailyCacheStrict()
   } catch {
     return emptyCache()
   }
@@ -211,7 +236,7 @@ export async function ensureCacheHydrated(
   const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
 
   return withDailyCacheLock(async () => {
-    let c = await loadDailyCache()
+    let c = await loadDailyCacheStrict()
 
     // Savings config changed: roll the cache forward into the active
     // mapping. We can't cheaply recompute savings for already-cached

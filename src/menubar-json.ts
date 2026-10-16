@@ -33,6 +33,11 @@ export type PeriodData = {
 /// `from` is null when not even the period's last day is fully covered.
 export type BreakdownCoverage = { from: string | null; to: string }
 
+/// Why the saved daily history could not be used, and the last day it holds.
+export type HistoryIncomplete = { reason: 'unreadable' | 'hydration-failed' | 'stale'; savedThrough: string | null }
+/// Payload form: plus the dates the (transcript-only) total covers.
+export type HistoryIncompleteInfo = HistoryIncomplete & { coveredFrom: string | null; to: string }
+
 export type ProviderCost = {
   name: string
   cost: number
@@ -176,6 +181,12 @@ export type MenubarPayload = {
     mcpServers: Array<{ name: string; calls: number }>
     /// Null when the breakdowns cover the whole period.
     breakdownCoverage: BreakdownCoverage | null
+    /// Non-null when the saved daily history could not be used: every total in
+    /// `current` (and history.daily over the period) then comes from surviving
+    /// transcripts only, covering `coveredFrom`..`to`.
+    historyIncomplete: HistoryIncompleteInfo | null
+    /// cost / sessions over the same coverage; null when no honest ratio exists.
+    costPerSession: number | null
   }
   optimize: {
     findingCount: number
@@ -257,10 +268,11 @@ function buildProviders(providers: ProviderCost[]): Record<string, number> {
   return map
 }
 
-function buildHistory(daily: DailyHistoryEntry[] | undefined): MenubarPayload['history'] {
+function buildHistory(daily: DailyHistoryEntry[] | undefined, keepFrom?: string): MenubarPayload['history'] {
   if (!daily || daily.length === 0) return { daily: [] }
   const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
-  const trimmed = sorted.slice(-HISTORY_DAYS_LIMIT)
+  const capStart = sorted.length - HISTORY_DAYS_LIMIT
+  const trimmed = sorted.filter((d, i) => i >= capStart || (keepFrom !== undefined && d.date >= keepFrom))
   return { daily: trimmed }
 }
 
@@ -315,6 +327,12 @@ export type BreakdownArrays = {
   localModelSavings?: LocalModelSavings
   /// See BreakdownCoverage. Omitted/null when breakdowns cover the period.
   breakdownCoverage?: BreakdownCoverage | null
+  historyIncomplete?: HistoryIncompleteInfo | null
+  /// Omitted = derived from cost/sessions.
+  costPerSession?: number | null
+  /// history.daily keeps every entry on or after this date even past the
+  /// 365-entry cap (custom ranges older than the default window).
+  historyFrom?: string
 }
 
 export function buildMenubarPayload(
@@ -352,8 +370,12 @@ export function buildMenubarPayload(
       subagents: breakdowns?.subagents ?? [],
       mcpServers: breakdowns?.mcpServers ?? [],
       breakdownCoverage: breakdowns?.breakdownCoverage ?? null,
+      historyIncomplete: breakdowns?.historyIncomplete ?? null,
+      costPerSession: breakdowns?.costPerSession !== undefined
+        ? breakdowns.costPerSession
+        : (current.sessions > 0 ? current.cost / current.sessions : null),
     },
     optimize: buildOptimize(optimize),
-    history: buildHistory(dailyHistory),
+    history: buildHistory(dailyHistory, breakdowns?.historyFrom),
   }
 }

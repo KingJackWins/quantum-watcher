@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange } from './types.js'
-import { type PeriodData, type ProviderCost, type BreakdownArrays, type BreakdownCoverage, type MenubarPayload, buildMenubarPayload } from './menubar-json.js'
+import { type PeriodData, type ProviderCost, type BreakdownArrays, type BreakdownCoverage, type HistoryIncomplete, type HistoryIncompleteInfo, type MenubarPayload, buildMenubarPayload } from './menubar-json.js'
 import { parseAllSessions, filterProjectsByName, filterProjectsByDays } from './parser.js'
 import { getLocalModelSavingsConfigHash, getShortModelName } from './models.js'
 import { getAllProviders } from './providers/index.js'
@@ -8,7 +8,7 @@ import { aggregateProjectsIntoDays, buildPeriodDataFromDays } from './day-aggreg
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { aggregateModels } from './models-report.js'
 import { scanAndDetect } from './optimize.js'
-import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry } from './daily-cache.js'
+import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, DailyCacheReadError, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry } from './daily-cache.js'
 
 export function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData {
   const sessions = projects.flatMap(p => p.sessions)
@@ -53,31 +53,50 @@ export function buildPeriodData(label: string, projects: ProjectSummary[]): Peri
   }
 }
 
-async function hydrateCache(): Promise<DailyCache> {
-  try {
-    return await ensureCacheHydrated(
-      (range) => parseAllSessions(range, 'all'),
-      aggregateProjectsIntoDays,
-      getLocalModelSavingsConfigHash(),
-    )
-  } catch (err) {
-    // Previously swallowed silently, which turned any backfill failure into an
-    // empty trend/history with no signal (issue #441). Per-file parse errors no
-    // longer reach here (they're isolated in parseProviderSources), so anything
-    // that does is exceptional and worth surfacing.
-    process.stderr.write(
-      `quantum-watcher: daily history backfill failed; the trend chart may be incomplete. ` +
-      `${err instanceof Error ? err.message : String(err)}\n`
-    )
-    return emptyCache()
-  }
+async function defaultEnsureHydrated(): Promise<DailyCache> {
+  return ensureCacheHydrated(
+    (range) => parseAllSessions(range, 'all'),
+    aggregateProjectsIntoDays,
+    getLocalModelSavingsConfigHash(),
+  )
 }
 
-/// A cache that came back from a failed hydration (or a first run that never
-/// completed) has never recorded a computed day. Its history is not a record of
-/// anything, so period totals must not be summed from it.
-export function isCacheUsable(cache: DailyCache): boolean {
-  return cache.lastComputedDate !== null
+/// The saved daily history could not be brought up to yesterday. Totals then
+/// come wholly from the transcript parse and the payload says so.
+export type HistoryState = { cache: DailyCache; incomplete: HistoryIncomplete | null }
+
+/**
+ * Loads and hydrates the saved daily history and decides whether it is a
+ * complete record through yesterday. Never turns a failure into a
+ * normal-looking history:
+ * - unreadable saved file (read/JSON/shape error): `unreadable`, empty cache,
+ *   and the file is left untouched (hydration refuses to rebuild over it);
+ * - any other hydration failure: `hydration-failed`, with whatever saved days
+ *   can still be read (for the trend chart only);
+ * - hydration returned but the last saved day is older than yesterday: `stale`.
+ */
+export async function resolveHistory(
+  yesterdayStr: string,
+  ensure: () => Promise<DailyCache> = defaultEnsureHydrated,
+  loadSaved: () => Promise<DailyCache> = loadDailyCache,
+): Promise<HistoryState> {
+  let cache: DailyCache
+  try {
+    cache = await ensure()
+  } catch (err) {
+    const unreadable = err instanceof DailyCacheReadError
+    process.stderr.write(
+      `quantum-watcher: daily history ${unreadable ? 'could not be read' : 'backfill failed'}; ` +
+      `totals fall back to surviving transcripts. ${err instanceof Error ? err.message : String(err)}\n`
+    )
+    if (unreadable) return { cache: emptyCache(), incomplete: { reason: 'unreadable', savedThrough: null } }
+    const saved = await loadSaved()
+    return { cache: saved, incomplete: { reason: 'hydration-failed', savedThrough: saved.lastComputedDate } }
+  }
+  if (cache.lastComputedDate === null || cache.lastComputedDate < yesterdayStr) {
+    return { cache, incomplete: { reason: 'stale', savedThrough: cache.lastComputedDate } }
+  }
+  return { cache, incomplete: null }
 }
 
 /**
@@ -118,64 +137,51 @@ export function sumHistoryTotals(days: DailyEntry[], pf: string): { cost: number
   return { cost, calls, savingsUSD }
 }
 
-/// Breakdowns count as covering the period while they account for at least this
-/// share of the recorded spend; below it the payload names the range they cover.
-const BREAKDOWN_COVERAGE_SHARE = 0.98
-const BREAKDOWN_COVERAGE_SLACK_USD = 1
+/// Earliest in-range day with any transcript-derived call (null when none).
+export function earliestParsedDay(parsedDays: Array<{ date: string; calls: number }>, inScope: (date: string) => boolean): string | null {
+  let earliest: string | null = null
+  for (const d of parsedDays) {
+    if (d.calls > 0 && inScope(d.date) && (earliest === null || d.date < earliest)) earliest = d.date
+  }
+  return earliest
+}
 
 /**
- * When the parse-derived breakdowns cover materially less spend than the
- * history-derived headline (transcripts deleted after ~30 days), returns the
- * date range they do cover: from the earliest day D such that, from D to the
- * end of the period, the breakdowns account for >= 98% of recorded spend
- * (`from` is null when no such day exists).
- * Returns null when the breakdowns cover the whole period.
+ * Coverage is decided by dates. The transcript-derived breakdowns cover from
+ * the earliest in-scope day that has any transcript call. If the saved history
+ * has spend on any in-scope day before that (or there is no transcript call at
+ * all), returns the covered range (`from` null = nothing covered); otherwise
+ * null (the breakdowns cover every day that has recorded spend).
  */
 export function computeBreakdownCoverage(
-  historyDays: Array<{ date: string; cost: number }>,
-  parsedDays: Array<{ date: string; cost: number }>,
-  rangeStartStr: string,
+  historyDays: Array<{ date: string; cost: number; calls: number }>,
+  parsedDays: Array<{ date: string; calls: number }>,
+  inScope: (date: string) => boolean,
   rangeEndStr: string,
 ): BreakdownCoverage | null {
-  const inRange = (d: { date: string }) => d.date >= rangeStartStr && d.date <= rangeEndStr
-  const hist = new Map<string, number>()
-  const parsed = new Map<string, number>()
-  for (const d of historyDays) if (inRange(d)) hist.set(d.date, (hist.get(d.date) ?? 0) + d.cost)
-  for (const d of parsedDays) if (inRange(d)) parsed.set(d.date, (parsed.get(d.date) ?? 0) + d.cost)
-  const covers = (p: number, h: number) => p >= h * BREAKDOWN_COVERAGE_SHARE - BREAKDOWN_COVERAGE_SLACK_USD
-  let histSum = 0, parsedSum = 0
-  for (const v of hist.values()) histSum += v
-  for (const v of parsed.values()) parsedSum += v
-  if (covers(parsedSum, histSum)) return null
-  const dates = [...new Set([...hist.keys(), ...parsed.keys()])].sort().reverse()
-  let h = 0, p = 0
-  let from: string | null = null
-  for (const date of dates) {
-    h += hist.get(date) ?? 0
-    p += parsed.get(date) ?? 0
-    if (covers(p, h)) from = date
-  }
-  // from === null: not even the latest day is fully covered, so there is no
-  // date range to name; the breakdowns cover only part of the period.
-  return { from, to: rangeEndStr }
+  const from = earliestParsedDay(parsedDays, inScope)
+  const uncovered = historyDays.some(d =>
+    inScope(d.date) && (d.cost > 0 || d.calls > 0) && (from === null || d.date < from))
+  return uncovered ? { from, to: rangeEndStr } : null
 }
 
 /**
  * Cost/calls/savings for a date range from the daily history (the same merge
  * as `history.daily`), for callers outside the menubar payload. `liveDays` are
  * the caller's live-parsed days; only today's entry is used. Returns null when
- * there is no usable daily history, so the caller keeps its transcript total.
+ * the saved history is incomplete (see resolveHistory), so the caller keeps its
+ * transcript total for the whole figure.
  */
 export async function historyTotalsForRange(
   range: DateRange,
   pf: string,
   liveDays: DailyEntry[],
 ): Promise<{ cost: number; calls: number; savingsUSD: number } | null> {
-  const cache = await hydrateCache()
-  if (!isCacheUsable(cache)) return null
   const now = new Date()
   const todayStr = toDateString(now)
   const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+  const { cache, incomplete } = await resolveHistory(yesterdayStr)
+  if (incomplete) return null
   const days = mergeHistoryDays(cache, liveDays, toDateString(range.start), toDateString(range.end), todayStr, yesterdayStr)
   return sumHistoryTotals(days, pf)
 }
@@ -233,8 +239,10 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   /// mergeHistoryDays; every earlier day comes from the daily cache.
   let liveDays: DailyEntry[]
 
+  const history = await resolveHistory(yesterdayStr)
+  cache = history.cache
+
   if (isAllProviders) {
-    cache = await hydrateCache()
     const todayProjects = await getTodayAllProjects()
     liveDays = await getTodayAllDays()
     const isTodayOnly = rangeStartStr === todayStr && rangeEndStr === todayStr
@@ -247,11 +255,6 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       scanRange = periodInfo.range
     }
   } else {
-    // Hydrate (not just load) so every completed day up to yesterday is in the
-    // record the provider-filtered totals are summed from. A failed hydration
-    // falls back to the plain load, which is what this branch did before.
-    const hydrated = await hydrateCache()
-    cache = isCacheUsable(hydrated) ? hydrated : await loadDailyCache()
     const rawProviderProjects = fp(await parseAllSessions(periodInfo.range, pf))
     scanProjects = daysSelection ? filterProjectsByDays(rawProviderProjects, daysSelection.days) : rawProviderProjects
     scanRange = periodInfo.range
@@ -265,40 +268,57 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   // further back. Every headline total is therefore the sum of the same merged
   // days that history.daily is built from. Breakdowns that the history cannot
   // carry (projects, sessions, tools, efficiency...) stay parse-derived, and
-  // `breakdownCoverage` says when they cover less than the headline.
-  // Falls back to the transcript parse when a project filter is active (the
-  // daily history is not split by project) or when no daily history exists.
+  // `breakdownCoverage` names the dates they cover when that is less.
+  // When the saved history is incomplete (unreadable, failed or stale), the
+  // WHOLE total comes from the transcript parse, history.daily carries those
+  // same parsed days for the period, and `historyIncomplete` says so.
+  // A project filter keeps the transcript totals (the history has no projects).
   const hasProjectFilter = (opts.project?.length ?? 0) > 0 || (opts.exclude?.length ?? 0) > 0
-  const useHistory = !hasProjectFilter && isCacheUsable(cache)
-  const periodDaysUnfiltered = mergeHistoryDays(cache, liveDays, rangeStartStr, rangeEndStr, todayStr, yesterdayStr)
-  const periodDays = daysSelection ? periodDaysUnfiltered.filter(d => daysSelection.days.has(d.date)) : periodDaysUnfiltered
+  const inScope = (date: string) =>
+    date >= rangeStartStr && date <= rangeEndStr && (!daysSelection || daysSelection.days.has(date))
+  // Call-dated days from the transcripts of this period and scope.
+  const parsedDays = aggregateProjectsIntoDays(scanProjects).filter(d => inScope(d.date))
+  const parsedCoverageFrom = earliestParsedDay(parsedDays.map(d => projectDay(d, pf)), inScope)
+  const historyIncomplete: HistoryIncompleteInfo | null = history.incomplete
+    ? { ...history.incomplete, coveredFrom: parsedCoverageFrom, to: rangeEndStr }
+    : null
+  const useHistory = !hasProjectFilter && historyIncomplete === null
+  const periodDays = historyIncomplete
+    ? parsedDays
+    : mergeHistoryDays(cache, liveDays, rangeStartStr, rangeEndStr, todayStr, yesterdayStr).filter(d => inScope(d.date))
   const breakdownCoverage: BreakdownCoverage | null = useHistory
-    ? computeBreakdownCoverage(
-        periodDays.map(d => projectDay(d, pf)),
-        aggregateProjectsIntoDays(scanProjects)
-          .filter(d => !daysSelection || daysSelection.days.has(d.date))
-          .map(d => projectDay(d, pf)),
-        rangeStartStr,
-        rangeEndStr,
-      )
+    ? computeBreakdownCoverage(periodDays.map(d => projectDay(d, pf)), parsedDays.map(d => projectDay(d, pf)), inScope, rangeEndStr)
     : null
   const parsedData = buildPeriodData(periodInfo.label, scanProjects)
-  if (useHistory && isAllProviders) {
+  const parsedCost = parsedData.cost
+  const parsedSessions = parsedData.sessions
+  if (!hasProjectFilter && isAllProviders) {
     currentData = buildPeriodDataFromDays(periodDays, periodInfo.label)
     // Sessions are a count, not spend: the parse counts every session active in
     // the period, the history only sessions that started in it. Keep the parse
     // count while the transcripts cover the period, so covered periods are
-    // unchanged; past that, the history count is the only complete one.
+    // unchanged; past that, the history count matches the history cost.
     if (breakdownCoverage === null) currentData.sessions = parsedData.sessions
   } else {
     currentData = parsedData
-    if (useHistory) {
+    if (!hasProjectFilter) {
       const totals = sumHistoryTotals(periodDays, pf)
       currentData.cost = totals.cost
       currentData.calls = totals.calls
       currentData.savingsUSD = totals.savingsUSD
     }
   }
+  // Cost per session divides two numbers of the same coverage, never a
+  // history-wide cost by a transcript-only session count:
+  // - all providers (no project filter): saved-days cost / saved-days sessions
+  //   (DailyEntry.sessions = sessions started that day), the same days;
+  // - provider filter or project filter: transcript cost / transcript sessions
+  //   (the history has no per-provider or per-project session count).
+  const cpsCost = !hasProjectFilter && isAllProviders ? sumHistoryTotals(periodDays, 'all').cost : parsedCost
+  const cpsSessions = !hasProjectFilter && isAllProviders
+    ? periodDays.reduce((n, d) => n + d.sessions, 0)
+    : parsedSessions
+  const costPerSession = cpsSessions > 0 ? cpsCost / cpsSessions : null
 
   // Codex credits for the period. Reuses the models aggregation (folds reasoning
   // into output, keeps non-cached input + cached-read separate) so the figure
@@ -339,8 +359,14 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   // Cache stores per-provider cost+calls per day in DailyEntry.providers, so we can derive
   // a provider-filtered history without re-parsing. Tokens aren't broken down per provider
   // in the cache, so the filtered view shows zero tokens (heatmap/trend still works on cost).
-  const historyStartStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS))
-  const historyDays = mergeHistoryDays(cache, liveDays, historyStartStr, todayStr, todayStr, yesterdayStr)
+  // The window reaches back to the period start when that is older (custom
+  // ranges), so history.daily always lists every day the total sums.
+  const defaultHistoryStartStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS))
+  const historyStartStr = rangeStartStr < defaultHistoryStartStr ? rangeStartStr : defaultHistoryStartStr
+  const mergedHistoryDays = mergeHistoryDays(cache, liveDays, historyStartStr, todayStr, todayStr, yesterdayStr)
+  const historyDays = historyIncomplete
+    ? [...mergedHistoryDays.filter(d => !inScope(d.date)), ...parsedDays].sort((a, b) => a.date.localeCompare(b.date))
+    : mergedHistoryDays
 
   let dailyHistory
   if (isAllProviders) {
@@ -522,8 +548,11 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       subagents: Object.entries(subagentMap).sort(([, a], [, b]) => b.cost - a.cost).slice(0, 10).map(([name, d]) => ({ name, ...d })),
       mcpServers: Object.entries(mcpMap).sort(([, a], [, b]) => b - a).slice(0, 10).map(([name, calls]) => ({ name, calls })),
       // The saved total is a period total: it follows the headline source.
-      localModelSavings: useHistory ? { ...localModelSavings, totalUSD: currentData.savingsUSD } : localModelSavings,
+      localModelSavings: hasProjectFilter ? localModelSavings : { ...localModelSavings, totalUSD: currentData.savingsUSD },
       breakdownCoverage,
+      historyIncomplete,
+      costPerSession,
+      historyFrom: historyStartStr,
     }
   })()
 

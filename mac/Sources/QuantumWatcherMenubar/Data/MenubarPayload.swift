@@ -132,6 +132,29 @@ struct CurrentBlock: Codable, Sendable {
     /// the period: the headline totals come from the daily history, the
     /// breakdowns only from transcripts that still exist. nil = full coverage.
     var breakdownCoverage: BreakdownCoverage? = nil
+    /// Set when the saved daily history could not be used: the totals then
+    /// cover only the days surviving transcripts hold. nil = complete history.
+    var historyIncomplete: HistoryIncomplete? = nil
+    /// Cost per session over one coverage (CLI-computed). nil with
+    /// `costPerSessionReported` = no honest ratio, show "—". Older CLIs do not
+    /// send it (`costPerSessionReported` false): fall back to cost / sessions.
+    var costPerSession: Double? = nil
+    var costPerSessionReported: Bool = false
+
+    /// The "Cost / session" tile value; nil = show "—".
+    var displayCostPerSession: Double? {
+        if costPerSessionReported { return costPerSession }
+        return sessions > 0 ? cost / Double(sessions) : nil
+    }
+}
+
+/// The saved daily history could not be used (unreadable, failed or stale).
+/// `coveredFrom`...`to` (yyyy-MM-dd) is what the transcript-only total covers.
+struct HistoryIncomplete: Codable, Sendable, Equatable {
+    let reason: String
+    let savedThrough: String?
+    let coveredFrom: String?
+    let to: String
 }
 
 /// Date range (yyyy-MM-dd, inclusive) the transcript-derived breakdowns cover.
@@ -146,7 +169,7 @@ extension CurrentBlock {
         case label, cost, calls, sessions, oneShotRate, inputTokens, outputTokens,
              cacheHitPercent, codexCredits, topActivities, topModels, localModelSavings, providers, topProjects,
              modelEfficiency, topSessions, retryTax, routingWaste,
-             tools, skills, subagents, mcpServers, breakdownCoverage
+             tools, skills, subagents, mcpServers, breakdownCoverage, historyIncomplete, costPerSession
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -173,6 +196,42 @@ extension CurrentBlock {
         subagents = try c.decodeIfPresent([SubagentEntry].self, forKey: .subagents) ?? []
         mcpServers = try c.decodeIfPresent([McpServerEntry].self, forKey: .mcpServers) ?? []
         breakdownCoverage = try c.decodeIfPresent(BreakdownCoverage.self, forKey: .breakdownCoverage)
+        historyIncomplete = try c.decodeIfPresent(HistoryIncomplete.self, forKey: .historyIncomplete)
+        costPerSessionReported = c.contains(.costPerSession)
+        costPerSession = try c.decodeIfPresent(Double.self, forKey: .costPerSession)
+    }
+
+    /// Encodes `costPerSession` as an explicit null when the CLI reported "no
+    /// ratio", so a cached payload decodes back to the same tile.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(label, forKey: .label)
+        try c.encode(cost, forKey: .cost)
+        try c.encode(calls, forKey: .calls)
+        try c.encode(sessions, forKey: .sessions)
+        try c.encodeIfPresent(oneShotRate, forKey: .oneShotRate)
+        try c.encode(inputTokens, forKey: .inputTokens)
+        try c.encode(outputTokens, forKey: .outputTokens)
+        try c.encode(cacheHitPercent, forKey: .cacheHitPercent)
+        try c.encodeIfPresent(codexCredits, forKey: .codexCredits)
+        try c.encode(topActivities, forKey: .topActivities)
+        try c.encode(topModels, forKey: .topModels)
+        try c.encode(localModelSavings, forKey: .localModelSavings)
+        try c.encode(providers, forKey: .providers)
+        try c.encode(topProjects, forKey: .topProjects)
+        try c.encode(modelEfficiency, forKey: .modelEfficiency)
+        try c.encode(topSessions, forKey: .topSessions)
+        try c.encode(retryTax, forKey: .retryTax)
+        try c.encode(routingWaste, forKey: .routingWaste)
+        try c.encode(tools, forKey: .tools)
+        try c.encode(skills, forKey: .skills)
+        try c.encode(subagents, forKey: .subagents)
+        try c.encode(mcpServers, forKey: .mcpServers)
+        try c.encodeIfPresent(breakdownCoverage, forKey: .breakdownCoverage)
+        try c.encodeIfPresent(historyIncomplete, forKey: .historyIncomplete)
+        if costPerSessionReported {
+            try c.encode(costPerSession, forKey: .costPerSession)
+        }
     }
 }
 

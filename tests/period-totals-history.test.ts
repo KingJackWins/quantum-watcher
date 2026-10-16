@@ -3,15 +3,15 @@
 // period reaching past the oldest transcript must still total every recorded
 // day, while a fully covered period must total exactly what the transcripts
 // give.
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 import { describe, expect, it } from 'vitest'
 
-import { DAILY_CACHE_VERSION, type DailyCache, type DailyEntry } from '../src/daily-cache.js'
-import { computeBreakdownCoverage, mergeHistoryDays, sumHistoryTotals } from '../src/usage-aggregator.js'
+import { DAILY_CACHE_VERSION, DailyCacheReadError, emptyCache, type DailyCache, type DailyEntry } from '../src/daily-cache.js'
+import { computeBreakdownCoverage, mergeHistoryDays, resolveHistory, sumHistoryTotals } from '../src/usage-aggregator.js'
 
 const DAY_MS = 24 * 3600_000
 
@@ -67,7 +67,12 @@ function entry(date: string, providers: Record<string, number>): DailyEntry {
 }
 
 type Payload = {
-  current: { cost: number; calls: number; providers: Record<string, number>; topModels: Array<{ cost: number }>; breakdownCoverage: { from: string | null; to: string } | null }
+  current: {
+    cost: number; calls: number; sessions: number; providers: Record<string, number>; topModels: Array<{ cost: number }>
+    breakdownCoverage: { from: string | null; to: string } | null
+    historyIncomplete: { reason: string; savedThrough: string | null; coveredFrom: string | null; to: string } | null
+    costPerSession: number | null
+  }
   history: { daily: Array<{ date: string; cost: number; calls: number }> }
 }
 
@@ -102,8 +107,9 @@ async function setupHome(opts: { tz: number; transcriptDaysAgo: number[]; seedOl
   return { home, todayStart }
 }
 
-function menubar(home: string, tz: string, period: string, provider = 'all'): Payload {
-  const r = runCli(['status', '--format', 'menubar-json', '--period', period, '--provider', provider, '--no-optimize'], home, tz)
+function menubar(home: string, tz: string, period: string, provider = 'all', extra: string[] = []): Payload {
+  const args = extra.length > 0 ? extra : ['--period', period]
+  const r = runCli(['status', '--format', 'menubar-json', ...args, '--provider', provider, '--no-optimize'], home, tz)
   expect(r.status, `stderr: ${r.stderr}`).toBe(0)
   return JSON.parse(r.stdout) as Payload
 }
@@ -260,10 +266,139 @@ describe('mergeHistoryDays / sumHistoryTotals / computeBreakdownCoverage', () =>
     expect(days.map(d => d.date)).toEqual(['2026-09-01', '2026-10-15'])
   })
 
-  it('names the covered range only when breakdowns fall short', () => {
-    const hist = [{ date: '2026-09-01', cost: 100 }, { date: '2026-10-15', cost: 10 }, { date: '2026-10-16', cost: 5 }]
-    expect(computeBreakdownCoverage(hist, hist, '2026-09-01', '2026-10-16')).toBeNull()
-    expect(computeBreakdownCoverage(hist, hist.slice(1), '2026-09-01', '2026-10-16')).toEqual({ from: '2026-10-15', to: '2026-10-16' })
-    expect(computeBreakdownCoverage(hist, [], '2026-09-01', '2026-10-16')).toEqual({ from: null, to: '2026-10-16' })
+  it('decides breakdown coverage by dates, not by a cost ratio', () => {
+    const all = () => true
+    const hist = [{ date: '2026-09-01', cost: 100, calls: 1 }, { date: '2026-10-16', cost: 10_000, calls: 50 }]
+    // The verdict's case: $100 on a deleted day + $10,000 today must still name the range.
+    expect(computeBreakdownCoverage(hist, [{ date: '2026-10-16', calls: 50 }], all, '2026-10-16')).toEqual({ from: '2026-10-16', to: '2026-10-16' })
+    // Every day with recorded spend has transcripts from its start: covered.
+    expect(computeBreakdownCoverage(hist, [{ date: '2026-09-01', calls: 1 }], all, '2026-10-16')).toBeNull()
+    // No transcript call at all: nothing covered.
+    expect(computeBreakdownCoverage(hist, [], all, '2026-10-16')).toEqual({ from: null, to: '2026-10-16' })
+    // Out-of-scope history days do not count.
+    expect(computeBreakdownCoverage(hist, [{ date: '2026-10-16', calls: 50 }], d => d >= '2026-10-01', '2026-10-16')).toBeNull()
   })
+})
+
+describe('resolveHistory never passes a failed history off as complete', () => {
+  const ok = (last: string | null): DailyCache => ({ ...emptyCache(), lastComputedDate: last, days: [entry('2026-10-10', { claude: 1 })] })
+
+  it('complete through yesterday: no flag', async () => {
+    const r = await resolveHistory('2026-10-15', async () => ok('2026-10-15'))
+    expect(r.incomplete).toBeNull()
+  })
+
+  it('unreadable saved history: flagged, empty, nothing rebuilt', async () => {
+    const r = await resolveHistory('2026-10-15', async () => { throw new DailyCacheReadError('bad json') }, async () => ok('2026-10-14'))
+    expect(r.incomplete).toEqual({ reason: 'unreadable', savedThrough: null })
+    expect(r.cache.days).toEqual([])
+  })
+
+  it('hydration failure: flagged with the last saved day', async () => {
+    const r = await resolveHistory('2026-10-15', async () => { throw new Error('EACCES') }, async () => ok('2026-10-13'))
+    expect(r.incomplete).toEqual({ reason: 'hydration-failed', savedThrough: '2026-10-13' })
+  })
+
+  it('stale saved history: flagged', async () => {
+    const r = await resolveHistory('2026-10-15', async () => ok('2026-10-13'))
+    expect(r.incomplete).toEqual({ reason: 'stale', savedThrough: '2026-10-13' })
+    const never = await resolveHistory('2026-10-15', async () => ok(null))
+    expect(never.incomplete).toEqual({ reason: 'stale', savedThrough: null })
+  })
+})
+
+describe('incomplete history, custom ranges, cost per session (CLI)', () => {
+  it('an unreadable saved history: whole total from transcripts, flagged, file left untouched', async () => {
+    const { home, todayStart } = await setupHome({ tz: 0, transcriptDaysAgo: [2, 0] })
+    const cachePath = join(home, '.cache', 'quantum-watcher', 'daily-cache.json')
+    try {
+      await mkdir(join(home, '.cache', 'quantum-watcher'), { recursive: true })
+      await writeFile(cachePath, '{"version": 8, "days": [ truncated')
+      const p = menubar(home, 'UTC', 'all')
+      const r = runCli(['report', '--format', 'json', '--period', 'all'], home, 'UTC')
+      const parsed = JSON.parse(r.stdout) as { overview: { cost: number; calls: number } }
+      expect(p.current.historyIncomplete).toEqual({ reason: 'unreadable', savedThrough: null, coveredFrom: dateIn(todayStart - 2 * DAY_MS, 0), to: dateIn(todayStart, 0) })
+      expect(p.current.cost).toBeCloseTo(parsed.overview.cost, 10)
+      expect(p.current.calls).toBe(2)
+      const sum = historySum(p, '0000')
+      expect(sum.cost).toBeCloseTo(p.current.cost, 10)
+      expect(sum.calls).toBe(p.current.calls)
+      expect(await readFile(cachePath, 'utf-8')).toBe('{"version": 8, "days": [ truncated')
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('a stale saved history whose hydration fails: whole total from transcripts, flagged with the last saved day', async () => {
+    const { home, todayStart } = await setupHome({
+      tz: 0,
+      transcriptDaysAgo: [2, 0],
+      seedOldDays: [{ daysAgo: 40, providers: { claude: 10 } }],
+    })
+    const dir = join(home, '.cache', 'quantum-watcher')
+    try {
+      await chmod(dir, 0o500) // hydration cannot save the gap it computed
+      const p = menubar(home, 'UTC', 'all')
+      await chmod(dir, 0o700)
+      const r = runCli(['report', '--format', 'json', '--period', 'all'], home, 'UTC')
+      const parsed = JSON.parse(r.stdout) as { overview: { cost: number } }
+      expect(p.current.historyIncomplete?.reason).toBe('hydration-failed')
+      expect(p.current.historyIncomplete?.savedThrough).toBe(dateIn(todayStart - 39 * DAY_MS + 3600_000, 0)) // seeded lastComputedDate
+      // Never mixed: the saved $10 day is not added to the transcript total.
+      expect(p.current.cost).toBeCloseTo(parsed.overview.cost, 10)
+      expect(p.current.calls).toBe(2)
+      expect(p.current.breakdownCoverage).toBeNull()
+    } finally {
+      await chmod(dir, 0o700).catch(() => {})
+      await rm(home, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('a custom range reaching a saved day older than the history window lists that day in history.daily', async () => {
+    const { home, todayStart } = await setupHome({
+      tz: 0,
+      transcriptDaysAgo: [0],
+      seedOldDays: [{ daysAgo: 400, providers: { claude: 100 } }, { daysAgo: 40, providers: { claude: 10 } }],
+    })
+    try {
+      const from = dateIn(todayStart - 410 * DAY_MS, 0)
+      const to = dateIn(todayStart - 30 * DAY_MS, 0)
+      const p = menubar(home, 'UTC', '', 'all', ['--from', from, '--to', to])
+      expect(p.current.cost).toBeCloseTo(110, 8)
+      const inRange = p.history.daily.filter(d => d.date >= from && d.date <= to)
+      expect(inRange.map(d => d.date)).toContain(dateIn(todayStart - 400 * DAY_MS + 3600_000, 0))
+      expect(inRange.reduce((s, d) => s + d.cost, 0)).toBeCloseTo(p.current.cost, 8)
+      expect(inRange.reduce((s, d) => s + d.calls, 0)).toBe(p.current.calls)
+      // Preset periods keep the 365-entry window.
+      const all = menubar(home, 'UTC', 'all')
+      expect(all.history.daily.some(d => d.date < dateIn(todayStart - 365 * DAY_MS, 0))).toBe(false)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('cost per session never divides a history-wide cost by a transcript-only session count', async () => {
+    const { home } = await setupHome({
+      tz: 0,
+      transcriptDaysAgo: [2, 0],
+      seedOldDays: [{ daysAgo: 40, providers: { claude: 10 } }],
+    })
+    try {
+      const claude = menubar(home, 'UTC', 'all', 'claude')
+      expect(claude.current.breakdownCoverage).not.toBeNull()
+      // Provider filter: transcript cost / transcript sessions.
+      const parsed = JSON.parse(runCli(['report', '--format', 'json', '--period', 'all', '--provider', 'claude'], home, 'UTC').stdout) as { overview: { cost: number; sessions: number } }
+      expect(parsed.overview.sessions).toBeGreaterThan(0)
+      expect(claude.current.costPerSession).toBeCloseTo(parsed.overview.cost / parsed.overview.sessions, 10)
+      expect(claude.current.costPerSession).not.toBeCloseTo(claude.current.cost / claude.current.sessions, 3)
+      // All providers, coverage incomplete: sessions are the saved-days count
+      // (includes the seeded day's session), so the ratio is saved/saved.
+      const all = menubar(home, 'UTC', 'all')
+      expect(all.current.breakdownCoverage).not.toBeNull()
+      expect(all.current.sessions).toBeGreaterThan(parsed.overview.sessions)
+      expect(all.current.costPerSession).toBeCloseTo(all.current.cost / all.current.sessions, 10)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  }, 120_000)
 })
