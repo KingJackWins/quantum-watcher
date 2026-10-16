@@ -28,7 +28,10 @@ function localDateString(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-export function renderStatusBar(projects: ProjectSummary[]): string {
+/// `monthTotal`, when given, replaces the transcript-derived month figure (the
+/// caller passes the daily-history total; transcripts older than ~30 days are
+/// deleted). Today's figure always comes from the transcripts (the live day).
+export function renderStatusBar(projects: ProjectSummary[], monthTotal?: { cost: number; calls: number }): string {
   const now = new Date()
   const today = localDateString(now)
   const monthStart = `${today.slice(0, 7)}-01`
@@ -54,6 +57,8 @@ export function renderStatusBar(projects: ProjectSummary[]): string {
       }
     }
   }
+
+  if (monthTotal) { monthCost = monthTotal.cost; monthCalls = monthTotal.calls }
 
   const lines: string[] = ['']
   lines.push(`  ${chalk.bold('Today')}  ${chalk.yellowBright(formatCost(todayCost))}  ${chalk.dim(`${todayCalls} calls`)}    ${chalk.bold('Month')}  ${chalk.yellowBright(formatCost(monthCost))}  ${chalk.dim(`${monthCalls} calls`)}`)

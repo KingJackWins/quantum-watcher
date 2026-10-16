@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange } from './types.js'
-import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, buildMenubarPayload } from './menubar-json.js'
+import { type PeriodData, type ProviderCost, type BreakdownArrays, type BreakdownCoverage, type MenubarPayload, buildMenubarPayload } from './menubar-json.js'
 import { parseAllSessions, filterProjectsByName, filterProjectsByDays } from './parser.js'
 import { getLocalModelSavingsConfigHash, getShortModelName } from './models.js'
 import { getAllProviders } from './providers/index.js'
@@ -8,7 +8,7 @@ import { aggregateProjectsIntoDays, buildPeriodDataFromDays } from './day-aggreg
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { aggregateModels } from './models-report.js'
 import { scanAndDetect } from './optimize.js'
-import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache } from './daily-cache.js'
+import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry } from './daily-cache.js'
 
 export function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData {
   const sessions = projects.flatMap(p => p.sessions)
@@ -73,6 +73,113 @@ async function hydrateCache(): Promise<DailyCache> {
   }
 }
 
+/// A cache that came back from a failed hydration (or a first run that never
+/// completed) has never recorded a computed day. Its history is not a record of
+/// anything, so period totals must not be summed from it.
+export function isCacheUsable(cache: DailyCache): boolean {
+  return cache.lastComputedDate !== null
+}
+
+/**
+ * The one merge behind `history.daily` and every period total: completed days
+ * (up to yesterday) from the daily cache, plus today's entry from the live
+ * parse. Only a live entry dated exactly today is taken, and the cache is read
+ * only up to yesterday, so no day can come from both sources.
+ */
+export function mergeHistoryDays(
+  cache: DailyCache,
+  liveDays: DailyEntry[],
+  startStr: string,
+  endStr: string,
+  todayStr: string,
+  yesterdayStr: string,
+): DailyEntry[] {
+  const cachedEnd = endStr < yesterdayStr ? endStr : yesterdayStr
+  const cached = startStr <= cachedEnd ? getDaysInRange(cache, startStr, cachedEnd) : []
+  const live = liveDays.filter(d => d.date === todayStr && d.date >= startStr && d.date <= endStr)
+  return [...cached, ...live].sort((a, b) => a.date.localeCompare(b.date))
+}
+
+/// One day's cost/calls/savings for the provider filter ('all' = the whole day).
+export function projectDay(d: DailyEntry, pf: string): { date: string; cost: number; savingsUSD: number; calls: number } {
+  if (pf === 'all') return { date: d.date, cost: d.cost, savingsUSD: d.savingsUSD, calls: d.calls }
+  const prov = d.providers[pf] ?? { calls: 0, cost: 0, savingsUSD: 0 }
+  return { date: d.date, cost: prov.cost, savingsUSD: prov.savingsUSD ?? 0, calls: prov.calls }
+}
+
+export function sumHistoryTotals(days: DailyEntry[], pf: string): { cost: number; calls: number; savingsUSD: number } {
+  let cost = 0, calls = 0, savingsUSD = 0
+  for (const d of days) {
+    const p = projectDay(d, pf)
+    cost += p.cost
+    calls += p.calls
+    savingsUSD += p.savingsUSD
+  }
+  return { cost, calls, savingsUSD }
+}
+
+/// Breakdowns count as covering the period while they account for at least this
+/// share of the recorded spend; below it the payload names the range they cover.
+const BREAKDOWN_COVERAGE_SHARE = 0.98
+const BREAKDOWN_COVERAGE_SLACK_USD = 1
+
+/**
+ * When the parse-derived breakdowns cover materially less spend than the
+ * history-derived headline (transcripts deleted after ~30 days), returns the
+ * date range they do cover: from the earliest day D such that, from D to the
+ * end of the period, the breakdowns account for >= 98% of recorded spend
+ * (`from` is null when no such day exists).
+ * Returns null when the breakdowns cover the whole period.
+ */
+export function computeBreakdownCoverage(
+  historyDays: Array<{ date: string; cost: number }>,
+  parsedDays: Array<{ date: string; cost: number }>,
+  rangeStartStr: string,
+  rangeEndStr: string,
+): BreakdownCoverage | null {
+  const inRange = (d: { date: string }) => d.date >= rangeStartStr && d.date <= rangeEndStr
+  const hist = new Map<string, number>()
+  const parsed = new Map<string, number>()
+  for (const d of historyDays) if (inRange(d)) hist.set(d.date, (hist.get(d.date) ?? 0) + d.cost)
+  for (const d of parsedDays) if (inRange(d)) parsed.set(d.date, (parsed.get(d.date) ?? 0) + d.cost)
+  const covers = (p: number, h: number) => p >= h * BREAKDOWN_COVERAGE_SHARE - BREAKDOWN_COVERAGE_SLACK_USD
+  let histSum = 0, parsedSum = 0
+  for (const v of hist.values()) histSum += v
+  for (const v of parsed.values()) parsedSum += v
+  if (covers(parsedSum, histSum)) return null
+  const dates = [...new Set([...hist.keys(), ...parsed.keys()])].sort().reverse()
+  let h = 0, p = 0
+  let from: string | null = null
+  for (const date of dates) {
+    h += hist.get(date) ?? 0
+    p += parsed.get(date) ?? 0
+    if (covers(p, h)) from = date
+  }
+  // from === null: not even the latest day is fully covered, so there is no
+  // date range to name; the breakdowns cover only part of the period.
+  return { from, to: rangeEndStr }
+}
+
+/**
+ * Cost/calls/savings for a date range from the daily history (the same merge
+ * as `history.daily`), for callers outside the menubar payload. `liveDays` are
+ * the caller's live-parsed days; only today's entry is used. Returns null when
+ * there is no usable daily history, so the caller keeps its transcript total.
+ */
+export async function historyTotalsForRange(
+  range: DateRange,
+  pf: string,
+  liveDays: DailyEntry[],
+): Promise<{ cost: number; calls: number; savingsUSD: number } | null> {
+  const cache = await hydrateCache()
+  if (!isCacheUsable(cache)) return null
+  const now = new Date()
+  const todayStr = toDateString(now)
+  const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+  const days = mergeHistoryDays(cache, liveDays, toDateString(range.start), toDateString(range.end), todayStr, yesterdayStr)
+  return sumHistoryTotals(days, pf)
+}
+
 export type PeriodInfo = { range: DateRange; label: string }
 export type AggregateOpts = {
   provider?: string
@@ -99,7 +206,6 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   const yesterdayStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
   const rangeStartStr = toDateString(periodInfo.range.start)
   const rangeEndStr = toDateString(periodInfo.range.end)
-  const historicalRangeEndStr = rangeEndStr < yesterdayStr ? rangeEndStr : yesterdayStr
   const isAllProviders = pf === 'all'
 
   let todayAllProjects: ProjectSummary[] | null = null
@@ -123,19 +229,14 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   let scanProjects: ProjectSummary[]
   let scanRange: DateRange
   let cache: DailyCache
-  let todayProviderData: PeriodData | null = null
+  /// Live-parsed days. Only today's entry is ever taken from here by
+  /// mergeHistoryDays; every earlier day comes from the daily cache.
+  let liveDays: DailyEntry[]
 
   if (isAllProviders) {
     cache = await hydrateCache()
     const todayProjects = await getTodayAllProjects()
-    const todayDays = await getTodayAllDays()
-    const historicalDays = rangeStartStr <= historicalRangeEndStr
-      ? getDaysInRange(cache, rangeStartStr, historicalRangeEndStr)
-      : []
-    const todayInRange = todayDays.filter(d => d.date >= rangeStartStr && d.date <= rangeEndStr)
-    const unfilteredDays = [...historicalDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
-    const allDays = daysSelection ? unfilteredDays.filter(d => daysSelection.days.has(d.date)) : unfilteredDays
-    currentData = buildPeriodDataFromDays(allDays, periodInfo.label)
+    liveDays = await getTodayAllDays()
     const isTodayOnly = rangeStartStr === todayStr && rangeEndStr === todayStr
     if (isTodayOnly) {
       scanProjects = todayProjects
@@ -146,16 +247,57 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       scanRange = periodInfo.range
     }
   } else {
-    cache = await loadDailyCache()
+    // Hydrate (not just load) so every completed day up to yesterday is in the
+    // record the provider-filtered totals are summed from. A failed hydration
+    // falls back to the plain load, which is what this branch did before.
+    const hydrated = await hydrateCache()
+    cache = isCacheUsable(hydrated) ? hydrated : await loadDailyCache()
     const rawProviderProjects = fp(await parseAllSessions(periodInfo.range, pf))
-    const fullProjects = daysSelection ? filterProjectsByDays(rawProviderProjects, daysSelection.days) : rawProviderProjects
-    todayProviderData = buildPeriodData(periodInfo.label, fullProjects)
-    currentData = todayProviderData
-    scanProjects = fullProjects
+    scanProjects = daysSelection ? filterProjectsByDays(rawProviderProjects, daysSelection.days) : rawProviderProjects
     scanRange = periodInfo.range
+    liveDays = aggregateProjectsIntoDays(scanProjects)
   }
-  if (isAllProviders) {
-    currentData = buildPeriodData(periodInfo.label, scanProjects)
+
+  // PERIOD TOTALS
+  // The daily history (completed days from the daily cache + today's live day)
+  // is the durable record: Claude Code deletes transcripts after ~30 days, so a
+  // total parsed from surviving transcripts undercounts any period that reaches
+  // further back. Every headline total is therefore the sum of the same merged
+  // days that history.daily is built from. Breakdowns that the history cannot
+  // carry (projects, sessions, tools, efficiency...) stay parse-derived, and
+  // `breakdownCoverage` says when they cover less than the headline.
+  // Falls back to the transcript parse when a project filter is active (the
+  // daily history is not split by project) or when no daily history exists.
+  const hasProjectFilter = (opts.project?.length ?? 0) > 0 || (opts.exclude?.length ?? 0) > 0
+  const useHistory = !hasProjectFilter && isCacheUsable(cache)
+  const periodDaysUnfiltered = mergeHistoryDays(cache, liveDays, rangeStartStr, rangeEndStr, todayStr, yesterdayStr)
+  const periodDays = daysSelection ? periodDaysUnfiltered.filter(d => daysSelection.days.has(d.date)) : periodDaysUnfiltered
+  const breakdownCoverage: BreakdownCoverage | null = useHistory
+    ? computeBreakdownCoverage(
+        periodDays.map(d => projectDay(d, pf)),
+        aggregateProjectsIntoDays(scanProjects)
+          .filter(d => !daysSelection || daysSelection.days.has(d.date))
+          .map(d => projectDay(d, pf)),
+        rangeStartStr,
+        rangeEndStr,
+      )
+    : null
+  const parsedData = buildPeriodData(periodInfo.label, scanProjects)
+  if (useHistory && isAllProviders) {
+    currentData = buildPeriodDataFromDays(periodDays, periodInfo.label)
+    // Sessions are a count, not spend: the parse counts every session active in
+    // the period, the history only sessions that started in it. Keep the parse
+    // count while the transcripts cover the period, so covered periods are
+    // unchanged; past that, the history count is the only complete one.
+    if (breakdownCoverage === null) currentData.sessions = parsedData.sessions
+  } else {
+    currentData = parsedData
+    if (useHistory) {
+      const totals = sumHistoryTotals(periodDays, pf)
+      currentData.cost = totals.cost
+      currentData.calls = totals.calls
+      currentData.savingsUSD = totals.savingsUSD
+    }
   }
 
   // Codex credits for the period. Reuses the models aggregation (folds reasoning
@@ -174,13 +316,8 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   const displayNameByName = new Map(allProviders.map(p => [p.name, p.displayName]))
   const providers: ProviderCost[] = []
   if (isAllProviders) {
-    const unfilteredProviderDays = [
-      ...(rangeStartStr <= historicalRangeEndStr ? getDaysInRange(cache, rangeStartStr, historicalRangeEndStr) : []),
-      ...(await getTodayAllDays()).filter(d => d.date >= rangeStartStr && d.date <= rangeEndStr),
-    ]
-    const allDaysForProviders = daysSelection ? unfilteredProviderDays.filter(d => daysSelection.days.has(d.date)) : unfilteredProviderDays
     const providerTotals: Record<string, number> = {}
-    for (const d of allDaysForProviders) {
+    for (const d of periodDays) {
       for (const [name, p] of Object.entries(d.providers)) {
         providerTotals[name] = (providerTotals[name] ?? 0) + p.cost
       }
@@ -203,13 +340,11 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   // a provider-filtered history without re-parsing. Tokens aren't broken down per provider
   // in the cache, so the filtered view shows zero tokens (heatmap/trend still works on cost).
   const historyStartStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS))
-  const allCacheDays = getDaysInRange(cache, historyStartStr, yesterdayStr)
+  const historyDays = mergeHistoryDays(cache, liveDays, historyStartStr, todayStr, todayStr, yesterdayStr)
 
   let dailyHistory
   if (isAllProviders) {
-    const todayDays = (await getTodayAllDays()).filter(d => d.date === todayStr)
-    const fullHistory = [...allCacheDays, ...todayDays]
-    dailyHistory = fullHistory.map(d => {
+    dailyHistory = historyDays.map(d => {
       const topModels = Object.entries(d.models)
         .filter(([name]) => name !== '<synthetic>')
         .sort(([, a], [, b]) => b.cost - a.cost)
@@ -236,37 +371,14 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     })
   } else {
     const emptyModels = [] as { name: string; cost: number; savingsUSD: number; calls: number; inputTokens: number; outputTokens: number }[]
-    const historyFromCache = allCacheDays.map(d => {
-      const prov = d.providers[pf] ?? { calls: 0, cost: 0, savingsUSD: 0 }
-      return {
-        date: d.date,
-        cost: prov.cost,
-        savingsUSD: prov.savingsUSD,
-        calls: prov.calls,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        topModels: emptyModels,
-      }
-    })
-    const todayFromParse = aggregateProjectsIntoDays(scanProjects)
-      .filter(d => d.date === todayStr)
-      .map(d => {
-        const prov = d.providers[pf] ?? { calls: 0, cost: 0, savingsUSD: 0 }
-        return {
-          date: d.date,
-          cost: prov.cost,
-          savingsUSD: prov.savingsUSD,
-          calls: prov.calls,
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          topModels: emptyModels,
-        }
-      })
-    dailyHistory = [...historyFromCache, ...todayFromParse]
+    dailyHistory = historyDays.map(d => ({
+      ...projectDay(d, pf),
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      topModels: emptyModels,
+    }))
   }
 
   const home = homedir()
@@ -409,7 +521,9 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       skills: Object.entries(skillMap).sort(([, a], [, b]) => b.cost - a.cost).slice(0, 10).map(([name, d]) => ({ name, ...d })),
       subagents: Object.entries(subagentMap).sort(([, a], [, b]) => b.cost - a.cost).slice(0, 10).map(([name, d]) => ({ name, ...d })),
       mcpServers: Object.entries(mcpMap).sort(([, a], [, b]) => b - a).slice(0, 10).map(([name, calls]) => ({ name, calls })),
-      localModelSavings,
+      // The saved total is a period total: it follows the headline source.
+      localModelSavings: useHistory ? { ...localModelSavings, totalUSD: currentData.savingsUSD } : localModelSavings,
+      breakdownCoverage,
     }
   })()
 

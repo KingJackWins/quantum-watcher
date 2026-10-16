@@ -128,6 +128,17 @@ struct CurrentBlock: Codable, Sendable {
     let skills: [SkillEntry]
     let subagents: [SubagentEntry]
     let mcpServers: [McpServerEntry]
+    /// Set when the breakdowns (projects, sessions, tooling...) cover less than
+    /// the period: the headline totals come from the daily history, the
+    /// breakdowns only from transcripts that still exist. nil = full coverage.
+    var breakdownCoverage: BreakdownCoverage? = nil
+}
+
+/// Date range (yyyy-MM-dd, inclusive) the transcript-derived breakdowns cover.
+/// `from` is nil when not even the period's last day is fully covered.
+struct BreakdownCoverage: Codable, Sendable, Equatable {
+    let from: String?
+    let to: String
 }
 
 extension CurrentBlock {
@@ -135,7 +146,7 @@ extension CurrentBlock {
         case label, cost, calls, sessions, oneShotRate, inputTokens, outputTokens,
              cacheHitPercent, codexCredits, topActivities, topModels, localModelSavings, providers, topProjects,
              modelEfficiency, topSessions, retryTax, routingWaste,
-             tools, skills, subagents, mcpServers
+             tools, skills, subagents, mcpServers, breakdownCoverage
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -161,6 +172,7 @@ extension CurrentBlock {
         skills = try c.decodeIfPresent([SkillEntry].self, forKey: .skills) ?? []
         subagents = try c.decodeIfPresent([SubagentEntry].self, forKey: .subagents) ?? []
         mcpServers = try c.decodeIfPresent([McpServerEntry].self, forKey: .mcpServers) ?? []
+        breakdownCoverage = try c.decodeIfPresent(BreakdownCoverage.self, forKey: .breakdownCoverage)
     }
 }
 

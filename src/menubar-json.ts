@@ -26,6 +26,13 @@ export type PeriodData = {
   topSessions?: Array<{ project: string; cost: number; savingsUSD: number; calls: number; date: string }>
 }
 
+/// Date range (YYYY-MM-DD, inclusive) the transcript-derived breakdowns cover
+/// when it is shorter than the period: the headline totals come from the
+/// durable daily history, but projects/sessions/tools/efficiency can only be
+/// rebuilt from transcripts that still exist.
+/// `from` is null when not even the period's last day is fully covered.
+export type BreakdownCoverage = { from: string | null; to: string }
+
 export type ProviderCost = {
   name: string
   cost: number
@@ -167,6 +174,8 @@ export type MenubarPayload = {
     skills: Array<{ name: string; turns: number; cost: number }>
     subagents: Array<{ name: string; calls: number; cost: number }>
     mcpServers: Array<{ name: string; calls: number }>
+    /// Null when the breakdowns cover the whole period.
+    breakdownCoverage: BreakdownCoverage | null
   }
   optimize: {
     findingCount: number
@@ -304,6 +313,8 @@ export type BreakdownArrays = {
   /// menubar payload defaults to an empty savings block — keeping the
   /// schema stable for consumers that don't care about local savings.
   localModelSavings?: LocalModelSavings
+  /// See BreakdownCoverage. Omitted/null when breakdowns cover the period.
+  breakdownCoverage?: BreakdownCoverage | null
 }
 
 export function buildMenubarPayload(
@@ -340,6 +351,7 @@ export function buildMenubarPayload(
       skills: breakdowns?.skills ?? [],
       subagents: breakdowns?.subagents ?? [],
       mcpServers: breakdowns?.mcpServers ?? [],
+      breakdownCoverage: breakdowns?.breakdownCoverage ?? null,
     },
     optimize: buildOptimize(optimize),
     history: buildHistory(dailyHistory),

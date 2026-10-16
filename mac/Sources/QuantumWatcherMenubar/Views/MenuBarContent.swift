@@ -64,6 +64,7 @@ struct MenuBarContent: View {
                             ModelsSection()
                             ToolingSection()
                             FindingsSection()
+                            BreakdownCoverageNote()
                         }
                     }
                     .padding(.horizontal, 10)
@@ -149,6 +150,46 @@ struct MenuBarContent: View {
         return !payload.current.providers.isEmpty
     }
 
+}
+
+/// One plain line under the breakdowns when they cover less than the period
+/// (transcripts are deleted after ~30 days; the totals above still count every
+/// recorded day).
+private struct BreakdownCoverageNote: View {
+    @Environment(AppStore.self) private var store
+
+    private static let ymd: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        return f
+    }()
+
+    private static let short: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        return f
+    }()
+
+    private static func pretty(_ ymd: String) -> String {
+        if ymd == Self.ymd.string(from: Date()) { return "today" }
+        guard let d = Self.ymd.date(from: ymd) else { return ymd }
+        return Self.short.string(from: d)
+    }
+
+    var body: some View {
+        if let coverage = store.payload.current.breakdownCoverage {
+            Text(coverage.from.map { "Breakdown covers \(Self.pretty($0)) to \(Self.pretty(coverage.to))" }
+                 ?? "Breakdown covers only part of this period")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 2)
+        }
+    }
 }
 
 private struct EmptyProviderState: View {

@@ -8,10 +8,10 @@ import { allProviderNames } from './providers/index.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
 import { toDateString } from './daily-cache.js'
-import { dateKey } from './day-aggregator.js'
+import { aggregateProjectsIntoDays, dateKey } from './day-aggregator.js'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
-import { buildPeriodData, buildMenubarPayloadForRange } from './usage-aggregator.js'
+import { buildPeriodData, buildMenubarPayloadForRange, historyTotalsForRange } from './usage-aggregator.js'
 import { renderDashboard } from './dashboard.js'
 import { renderOverview } from './overview.js'
 import { runWebDashboard } from './web-dashboard.js'
@@ -656,6 +656,18 @@ program
       const monthProjects = fp(await parseAllSessions(getDateRange('month').range, pf))
       const monthData = buildPeriodData('month', monthProjects)
       clearSessionCache()
+      // The month total comes from the durable daily history (transcripts are
+      // deleted after ~30 days), unless a project filter is active: the daily
+      // history is not split by project. Today is the live day either way.
+      const hasProjectFilter = opts.project.length > 0 || opts.exclude.length > 0
+      const monthHistory = hasProjectFilter
+        ? null
+        : await historyTotalsForRange(getDateRange('month').range, pf, aggregateProjectsIntoDays(todayProjects))
+      if (monthHistory) {
+        monthData.cost = monthHistory.cost
+        monthData.calls = monthHistory.calls
+        monthData.savingsUSD = monthHistory.savingsUSD
+      }
       const { code, rate } = getCurrency()
       const payload: {
         currency: string
@@ -685,7 +697,11 @@ program
 
     const monthProjects2 = fp(await parseAllSessions(getDateRange('month').range, pf))
     clearSessionCache()
-    console.log(renderStatusBar(monthProjects2))
+    const hasProjectFilter2 = opts.project.length > 0 || opts.exclude.length > 0
+    const monthHistory2 = hasProjectFilter2
+      ? null
+      : await historyTotalsForRange(getDateRange('month').range, pf, aggregateProjectsIntoDays(monthProjects2))
+    console.log(renderStatusBar(monthProjects2, monthHistory2 ? { cost: monthHistory2.cost, calls: monthHistory2.calls } : undefined))
   })
 
 program
