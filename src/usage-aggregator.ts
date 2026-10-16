@@ -8,7 +8,7 @@ import { aggregateProjectsIntoDays, buildPeriodDataFromDays } from './day-aggreg
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { aggregateModels } from './models-report.js'
 import { scanAndDetect } from './optimize.js'
-import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, DailyCacheReadError, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry } from './daily-cache.js'
+import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, DailyCacheReadError, DailyCacheMalformedError, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry } from './daily-cache.js'
 
 export function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData {
   const sessions = projects.flatMap(p => p.sessions)
@@ -69,6 +69,8 @@ export type HistoryState = { cache: DailyCache; incomplete: HistoryIncomplete | 
  * Loads and hydrates the saved daily history and decides whether it is a
  * complete record through yesterday. Never turns a failure into a
  * normal-looking history:
+ * - a malformed saved row (validateDailyRow): `malformed`, empty cache, file
+ *   left untouched;
  * - unreadable saved file (read/JSON/shape error): `unreadable`, empty cache,
  *   and the file is left untouched (hydration refuses to rebuild over it);
  * - any other hydration failure: `hydration-failed`, with whatever saved days
@@ -84,11 +86,13 @@ export async function resolveHistory(
   try {
     cache = await ensure()
   } catch (err) {
+    const malformed = err instanceof DailyCacheMalformedError
     const unreadable = err instanceof DailyCacheReadError
     process.stderr.write(
-      `quantum-watcher: daily history ${unreadable ? 'could not be read' : 'backfill failed'}; ` +
+      `quantum-watcher: daily history ${malformed ? 'has a malformed row' : unreadable ? 'could not be read' : 'backfill failed'}; ` +
       `totals fall back to surviving transcripts. ${err instanceof Error ? err.message : String(err)}\n`
     )
+    if (malformed) return { cache: emptyCache(), incomplete: { reason: 'malformed', savedThrough: null } }
     if (unreadable) return { cache: emptyCache(), incomplete: { reason: 'unreadable', savedThrough: null } }
     const saved = await loadSaved()
     return { cache: saved, incomplete: { reason: 'hydration-failed', savedThrough: saved.lastComputedDate } }

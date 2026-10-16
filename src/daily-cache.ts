@@ -71,6 +71,65 @@ function isMigratableCache(parsed: unknown): parsed is { version: number; lastCo
   return c.version >= MIN_SUPPORTED_VERSION && c.version <= DAILY_CACHE_VERSION
 }
 
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+/// Provider breakdowns may differ from the row total only by float rounding.
+const ROUNDING_USD = 1e-6
+
+function isValidDay(v: unknown): v is string {
+  if (typeof v !== 'string' || !ISO_DAY_RE.test(v)) return false
+  const [y, m, d] = v.split('-').map(Number) as [number, number, number]
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
+}
+const isAmount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+
+function checkFields(o: unknown, amounts: string[], counts: string[], where: string): string | null {
+  if (!isRecord(o)) return `${where} is not an object`
+  for (const k of amounts) if (!isAmount(o[k])) return `${where}.${k} is not a finite amount >= 0 (${JSON.stringify(o[k])})`
+  for (const k of counts) if (!isCount(o[k])) return `${where}.${k} is not a non-negative integer (${JSON.stringify(o[k])})`
+  return null
+}
+
+function checkMap(m: unknown, amounts: string[], counts: string[], where: string): string | null {
+  if (!isRecord(m)) return `${where} is not an object`
+  for (const [name, e] of Object.entries(m)) {
+    const err = checkFields(e, amounts, counts, `${where}[${JSON.stringify(name)}]`)
+    if (err) return err
+  }
+  return null
+}
+
+/**
+ * Strict check of one saved row. Every field the history merge reads must be
+ * present and valid: a malformed row is never coerced to 0 (that would turn
+ * recorded spend into a believable undercount). Returns the first problem, or
+ * null when the row is valid.
+ */
+export function validateDailyRow(d: unknown, index: number): string | null {
+  const where = `days[${index}]`
+  if (!isRecord(d)) return `${where} is not an object`
+  if (!isValidDay(d.date)) return `${where}.date is not a valid YYYY-MM-DD (${JSON.stringify(d.date)})`
+  const at = `${where} (${d.date})`
+  const row = checkFields(d, ['cost', 'savingsUSD'],
+    ['calls', 'sessions', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'editTurns', 'oneShotTurns'], at)
+  if (row) return row
+  const models = checkMap(d.models, ['cost', 'savingsUSD'], ['calls', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'], `${at}.models`)
+  if (models) return models
+  const categories = checkMap(d.categories, ['cost', 'savingsUSD'], ['turns', 'editTurns', 'oneShotTurns'], `${at}.categories`)
+  if (categories) return categories
+  const providers = checkMap(d.providers, ['cost', 'savingsUSD'], ['calls'], `${at}.providers`)
+  if (providers) return providers
+  const prov = Object.values(d.providers as Record<string, { cost: number; savingsUSD: number; calls: number }>)
+  const sum = (k: 'cost' | 'savingsUSD' | 'calls') => prov.reduce((s, p) => s + p[k], 0)
+  const cost = d.cost as number, savings = d.savingsUSD as number, calls = d.calls as number
+  if (sum('cost') > cost + ROUNDING_USD + 1e-9 * cost) return `${at}.providers cost ${sum('cost')} exceeds the row total ${cost}`
+  if (sum('savingsUSD') > savings + ROUNDING_USD + 1e-9 * savings) return `${at}.providers savingsUSD ${sum('savingsUSD')} exceeds the row total ${savings}`
+  if (sum('calls') > calls) return `${at}.providers calls ${sum('calls')} exceed the row total ${calls}`
+  return null
+}
+
 function migrateDays(days: Record<string, unknown>[]): DailyEntry[] {
   return days.map(d => ({
     date: d.date as string,
@@ -105,9 +164,19 @@ export class DailyCacheReadError extends Error {
   }
 }
 
+/// A saved row (or the watermark) is malformed. The whole saved history is
+/// unusable for this run; the file is left exactly as it is.
+export class DailyCacheMalformedError extends DailyCacheReadError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DailyCacheMalformedError'
+  }
+}
+
 /// Strict load used by hydration: a missing file is a fresh install (empty
 /// cache); a file too old to migrate is backed up and started fresh (the
-/// version migration path); any other read or parse failure throws.
+/// version migration path); any other read or parse failure throws, and so
+/// does any malformed row (validateDailyRow) before anything is migrated or saved.
 export async function loadDailyCacheStrict(): Promise<DailyCache> {
   const path = getCachePath()
   if (!existsSync(path)) return emptyCache()
@@ -118,6 +187,13 @@ export async function loadDailyCacheStrict(): Promise<DailyCache> {
     throw new DailyCacheReadError(`daily history at ${path} is unreadable: ${err instanceof Error ? err.message : String(err)}`)
   }
   if (isMigratableCache(parsed)) {
+    if (parsed.lastComputedDate !== null && !isValidDay(parsed.lastComputedDate)) {
+      throw new DailyCacheMalformedError(`daily history at ${path}: lastComputedDate is not a valid YYYY-MM-DD (${JSON.stringify(parsed.lastComputedDate)})`)
+    }
+    for (let i = 0; i < parsed.days.length; i++) {
+      const problem = validateDailyRow(parsed.days[i], i)
+      if (problem) throw new DailyCacheMalformedError(`daily history at ${path} has a malformed row: ${problem}`)
+    }
     const migrated: DailyCache = {
       version: DAILY_CACHE_VERSION,
       savingsConfigHash: parsed.savingsConfigHash ?? '',

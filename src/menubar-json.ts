@@ -34,7 +34,7 @@ export type PeriodData = {
 export type BreakdownCoverage = { from: string | null; to: string }
 
 /// Why the saved daily history could not be used, and the last day it holds.
-export type HistoryIncomplete = { reason: 'unreadable' | 'hydration-failed' | 'stale'; savedThrough: string | null }
+export type HistoryIncomplete = { reason: 'malformed' | 'unreadable' | 'hydration-failed' | 'stale'; savedThrough: string | null }
 /// Payload form: plus the dates the (transcript-only) total covers.
 export type HistoryIncompleteInfo = HistoryIncomplete & { coveredFrom: string | null; to: string }
 

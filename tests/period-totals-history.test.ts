@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process'
 
 import { describe, expect, it } from 'vitest'
 
-import { DAILY_CACHE_VERSION, DailyCacheReadError, emptyCache, type DailyCache, type DailyEntry } from '../src/daily-cache.js'
+import { DAILY_CACHE_VERSION, DailyCacheReadError, emptyCache, validateDailyRow, type DailyCache, type DailyEntry } from '../src/daily-cache.js'
 import { computeBreakdownCoverage, incompleteCoveredFrom, isShortfall, mergeHistoryDays, resolveHistory, sumHistoryTotals } from '../src/usage-aggregator.js'
 
 const DAY_MS = 24 * 3600_000
@@ -445,4 +445,62 @@ describe('incomplete history, custom ranges, cost per session (CLI)', () => {
       await rm(home, { recursive: true, force: true })
     }
   }, 120_000)
+})
+
+describe('malformed saved rows make the whole history unusable, never zero', () => {
+  // Each case breaks ONE row of an otherwise valid version-8 cache that is
+  // complete through yesterday.
+  const cases: Array<{ name: string; mutate: (row: Record<string, unknown>) => void }> = [
+    { name: "the verdict's case: cost null with a $100 provider breakdown", mutate: r => { r.cost = null; r.providers = { claude: { calls: 1, cost: 100, savingsUSD: 0 } } } },
+    { name: 'a negative cost', mutate: r => { r.cost = -5 } },
+    { name: 'a string cost', mutate: r => { r.cost = '12.5' } },
+    { name: 'a missing calls field', mutate: r => { delete r.calls } },
+    { name: 'an invalid date', mutate: r => { r.date = '2026-02-30' } },
+    { name: 'a provider breakdown above the row total', mutate: r => { r.providers = { claude: { calls: 1, cost: 10.5, savingsUSD: 0 } } } },
+  ]
+
+  for (const c of cases) {
+    it(`${c.name}: flagged "malformed", transcript-only total, file byte-identical`, async () => {
+      const { home, todayStart } = await setupHome({ tz: 0, transcriptDaysAgo: [2, 0] })
+      const dir = join(home, '.cache', 'quantum-watcher')
+      const cachePath = join(dir, 'daily-cache.json')
+      try {
+        const bad = entry(dateIn(todayStart - 40 * DAY_MS + 3600_000, 0), { claude: 10 }) as unknown as Record<string, unknown>
+        c.mutate(bad)
+        const cache = {
+          version: DAILY_CACHE_VERSION,
+          savingsConfigHash: '',
+          lastComputedDate: dateIn(todayStart - DAY_MS + 3600_000, 0),
+          days: [bad, entry(dateIn(todayStart - 20 * DAY_MS + 3600_000, 0), { claude: 7 })],
+        }
+        await mkdir(dir, { recursive: true })
+        const bytes = JSON.stringify(cache)
+        await writeFile(cachePath, bytes)
+
+        const p = menubar(home, 'UTC', 'all')
+        const r = runCli(['report', '--format', 'json', '--period', 'all'], home, 'UTC')
+        const parsed = JSON.parse(r.stdout) as { overview: { cost: number; calls: number } }
+        expect(p.current.historyIncomplete?.reason).toBe('malformed')
+        expect(p.current.historyIncomplete?.savedThrough).toBeNull()
+        expect(p.current.cost).toBeCloseTo(parsed.overview.cost, 10)
+        expect(p.current.calls).toBe(parsed.overview.calls)
+        expect(historySum(p, '0000').cost).toBeCloseTo(p.current.cost, 10)
+        const st = JSON.parse(runCli(['status', '--format', 'json'], home, 'UTC').stdout) as { historyIncomplete: { reason: string } | null }
+        expect(st.historyIncomplete?.reason).toBe('malformed')
+        expect(await readFile(cachePath, 'utf-8')).toBe(bytes)
+      } finally {
+        await rm(home, { recursive: true, force: true })
+      }
+    }, 120_000)
+  }
+
+  it('validateDailyRow rejects NaN/Infinity and fractional counts, accepts a valid row and rounding', () => {
+    const ok = entry('2026-10-01', { claude: 0.1, codex: 0.2 }) as unknown as Record<string, unknown>
+    ok.cost = 0.30000000000000004 - 1e-12 // float rounding below the provider sum
+    expect(validateDailyRow(ok, 0)).toBeNull()
+    expect(validateDailyRow({ ...ok, cost: Number.NaN }, 0)).toMatch(/cost/)
+    expect(validateDailyRow({ ...ok, cost: Number.POSITIVE_INFINITY }, 0)).toMatch(/cost/)
+    expect(validateDailyRow({ ...ok, calls: 1.5 }, 0)).toMatch(/calls/)
+    expect(validateDailyRow({ ...ok, models: { m: { calls: 1, cost: -1, savingsUSD: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } } }, 0)).toMatch(/models/)
+  })
 })
