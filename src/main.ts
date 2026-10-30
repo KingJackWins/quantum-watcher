@@ -1,3 +1,4 @@
+import { enableSessionSnapshotReuse } from './session-cache.js'
 import { isAbsolute } from 'path'
 import { Command } from 'commander'
 import { installMenubarApp } from './menubar-installer.js'
@@ -611,6 +612,7 @@ program
   .option('--project <name>', 'Show only projects matching name (repeatable)', collect, [])
   .option('--exclude <name>', 'Exclude projects matching name (repeatable)', collect, [])
   .option('--period <period>', 'Primary period for menubar-json: today, week, 30days, month, all', 'today')
+  .option('--periods <periods>', 'Batch menubar-json periods in one process (comma-separated)')
   .option('--day <date>', 'Single day for menubar-json (YYYY-MM-DD, today, or yesterday). Overrides --period when set')
   .option('--from <date>', 'Start date (YYYY-MM-DD) for custom range')
   .option('--to <date>', 'End date (YYYY-MM-DD) for custom range')
@@ -627,10 +629,25 @@ program
       process.stderr.write('error: --days cannot be combined with --day, --from, or --to\n')
       process.exit(1)
     }
+    const batchPeriods: string[] | undefined = opts.periods === undefined ? undefined : [...new Set<string>(opts.periods.split(',').map((p: string) => p.trim()))]
+    if (batchPeriods && (opts.format !== 'menubar-json' || opts.day || opts.days || opts.from || opts.to || batchPeriods.some(p => !['today', 'week', '30days', 'month', 'all'].includes(p)))) {
+      program.error('--periods requires menubar-json, valid period names, and no date selection')
+    }
     await loadPricing()
     const pf = opts.provider
     const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project, opts.exclude)
     if (opts.format === 'menubar-json') {
+      enableSessionSnapshotReuse()
+      if (batchPeriods) {
+        const payloads: Record<string, Awaited<ReturnType<typeof buildMenubarPayloadForRange>>> = {}
+        for (const period of batchPeriods) {
+          payloads[period] = await buildMenubarPayloadForRange(getDateRange(period), {
+            provider: pf, project: opts.project, exclude: opts.exclude, optimize: opts.optimize !== false,
+          })
+        }
+        console.log(JSON.stringify({ payloads }))
+        return
+      }
       const daysSelection = parseDaysFlag(opts.days)
       const customRange = daysSelection ? null : parseDateRangeFlags(opts.from, opts.to)
       const daySelection = parseDayFlag(opts.day)

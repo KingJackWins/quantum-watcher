@@ -1,14 +1,15 @@
 import Foundation
 import Observation
 
-private let cacheTTLSeconds: TimeInterval = 30
 private let interactiveRefreshResetSeconds: TimeInterval = 120
 private let menubarPeriodDefaultsKey = "QuantumWatcherMenubarPeriod"
 
 struct CachedPayload {
     let payload: MenubarPayload
     let fetchedAt: Date
-    var isFresh: Bool { Date().timeIntervalSince(fetchedAt) < cacheTTLSeconds }
+    func isFresh(for period: Period) -> Bool {
+        PayloadRefreshCadence.isFresh(period: period, fetchedAt: fetchedAt)
+    }
 }
 
 struct PayloadCacheKey: Hashable {
@@ -169,7 +170,7 @@ final class AppStore {
     }
 
     var needsStatusPayloadRefresh: Bool {
-        cache[menubarStatusKey]?.isFresh != true
+        cache[menubarStatusKey]?.isFresh(for: menubarStatusKey.period) != true
     }
 
     var menubarPayload: MenubarPayload? {
@@ -236,9 +237,9 @@ final class AppStore {
 
     var needsInteractivePayloadRefresh: Bool {
         let periodAllKey = PayloadCacheKey(period: selectedPeriod, provider: .all, day: selectedDay, days: selectedDays)
-        return cache[currentKey]?.isFresh != true ||
-            cache[todayAllKey]?.isFresh != true ||
-            cache[periodAllKey]?.isFresh != true ||
+        return cache[currentKey]?.isFresh(for: currentKey.period) != true ||
+            cache[todayAllKey]?.isFresh(for: todayAllKey.period) != true ||
+            cache[periodAllKey]?.isFresh(for: periodAllKey.period) != true ||
             hasStaleLoading
     }
 
@@ -476,7 +477,7 @@ final class AppStore {
         let cacheDateAtStart = cacheDate
         let generationAtStart = payloadRefreshGeneration
         if Task.isCancelled { return }
-        if !force, cache[key]?.isFresh == true { return }
+        if !force, cache[key]?.isFresh(for: key.period) == true { return }
         if inFlightKeys[key] != nil { return }
         inFlightKeys[key] = Date()
         attemptedKeys.insert(key)
@@ -557,8 +558,60 @@ final class AppStore {
         }
 
         let allKey = PayloadCacheKey(period: key.period, provider: .all, day: key.day)
-        if key != allKey, cache[allKey]?.isFresh != true {
+        if key != allKey, cache[allKey]?.isFresh(for: allKey.period) != true {
             await refreshQuietly(period: key.period, day: key.day)
+        }
+    }
+
+    /// Refresh all-provider periods together so a due long period does not
+    /// start a second Node process just to reload the same 284 MB snapshot.
+    func refreshPeriods(_ periods: Set<Period>, force: Bool, showLoading: Bool,
+                        fetch: ([Period]) async throws -> [Period: MenubarPayload] = DataClient.fetchPeriods) async {
+        invalidateStaleDayCache()
+        guard !Task.isCancelled else { return }
+        let keys = periods.map { PayloadCacheKey(period: $0, provider: .all) }.filter { key in
+            inFlightKeys[key] == nil &&
+                (PayloadRefreshCadence.forceOnTick(period: key.period, explicit: force) ||
+                 cache[key]?.isFresh(for: key.period) != true)
+        }
+        guard !keys.isEmpty else { return }
+        let dayAtStart = cacheDate
+        let generation = payloadRefreshGeneration
+        let loadingKeys = keys.filter { $0 == currentKey && (showLoading || cache[$0] == nil) }
+        for key in keys {
+            inFlightKeys[key] = Date()
+            attemptedKeys.insert(key)
+            lastErrorByKey[key] = nil
+        }
+        for key in loadingKeys { beginLoading(for: key) }
+        defer {
+            for key in keys {
+                inFlightKeys[key] = nil
+                if (Task.isCancelled || generation != payloadRefreshGeneration),
+                   cache[key] == nil, lastErrorByKey[key] == nil {
+                    attemptedKeys.remove(key)
+                }
+            }
+            for key in loadingKeys { finishLoading(for: key) }
+        }
+        do {
+            let payloads = try await fetch(keys.map(\.period))
+            guard !Task.isCancelled, generation == payloadRefreshGeneration else { return }
+            guard cacheDate == dayAtStart, cacheDate == currentCacheDate() else {
+                invalidateStaleDayCache()
+                return
+            }
+            let fetchedAt = Date()
+            for key in keys {
+                guard let payload = payloads[key.period] else { continue }
+                cache[key] = CachedPayload(payload: payload, fetchedAt: fetchedAt)
+                lastSuccessByKey[key] = fetchedAt
+                lastErrorByKey[key] = nil
+            }
+        } catch {
+            guard !Task.isCancelled, generation == payloadRefreshGeneration else { return }
+            for key in keys { lastErrorByKey[key] = String(describing: error) }
+            NSLog("QuantumWatcher: batch refresh failed: \(error)")
         }
     }
 
@@ -568,7 +621,7 @@ final class AppStore {
     func refreshQuietly(period: Period, day: String? = nil, force: Bool = false) async {
         invalidateStaleDayCache()
         let key = PayloadCacheKey(period: period, provider: .all, day: day)
-        if !force, cache[key]?.isFresh == true { return }
+        if !force, cache[key]?.isFresh(for: key.period) == true { return }
         if inFlightKeys[key] != nil { return }
         inFlightKeys[key] = Date()
         attemptedKeys.insert(key)

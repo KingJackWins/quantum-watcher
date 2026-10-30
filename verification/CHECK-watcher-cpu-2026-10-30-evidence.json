@@ -1,0 +1,679 @@
+{
+  "baseCommit": "8c31b27b08e8a5bc7d2b6396b5c25ac7f65e6f72",
+  "cpuUnit": "user + system CPU seconds; percent of one core",
+  "initialBase": {
+    "today": {
+      "wall": 2.52,
+      "user": 3.07,
+      "system": 0.56
+    },
+    "all": {
+      "wall": 4.8,
+      "user": 5.42,
+      "system": 1.02
+    }
+  },
+  "controlledSummary": [
+    {
+      "stage": "unchanged",
+      "meanCpu": {
+        "base": {
+          "today": 2.7139260000000003,
+          "all": 5.5436526666666675
+        },
+        "after": {
+          "today": 1.8401139999999983,
+          "all": 2.8504883333333346
+        }
+      },
+      "beforePercent": 27.525262222222224,
+      "afterPercent": 1.8303542013888876,
+      "speedup": 15.038216210466715,
+      "changedFileBytes": 7905515
+    },
+    {
+      "stage": "one-changed-file",
+      "meanCpu": {
+        "base": {
+          "today": 3.979982666666663,
+          "all": 6.67081133333333
+        },
+        "after": {
+          "today": 2.837979000000004,
+          "all": 4.1403193333333315
+        }
+      },
+      "beforePercent": 35.50264666666665,
+      "afterPercent": 2.7962657638888917,
+      "speedup": 12.696449359409792,
+      "changedFileBytes": 7905515
+    }
+  ],
+  "controlledSamples": [
+    {
+      "stage": "unchanged",
+      "trial": 0,
+      "period": "today",
+      "kind": "base",
+      "wall": 1.97994958399795,
+      "cpu": 2.5121019999999996
+    },
+    {
+      "stage": "unchanged",
+      "trial": 0,
+      "period": "today",
+      "kind": "after",
+      "wall": 1.951035208068788,
+      "cpu": 2.1320360000000003
+    },
+    {
+      "stage": "unchanged",
+      "trial": 0,
+      "period": "all",
+      "kind": "base",
+      "wall": 3.7178852499928325,
+      "cpu": 5.74868
+    },
+    {
+      "stage": "unchanged",
+      "trial": 0,
+      "period": "all",
+      "kind": "after",
+      "wall": 2.417537499917671,
+      "cpu": 2.8723150000000004
+    },
+    {
+      "stage": "unchanged",
+      "trial": 1,
+      "period": "today",
+      "kind": "base",
+      "wall": 1.7766586248762906,
+      "cpu": 2.804090000000001
+    },
+    {
+      "stage": "unchanged",
+      "trial": 1,
+      "period": "today",
+      "kind": "after",
+      "wall": 1.5269127499777824,
+      "cpu": 1.6815069999999968
+    },
+    {
+      "stage": "unchanged",
+      "trial": 1,
+      "period": "all",
+      "kind": "base",
+      "wall": 3.5575934590306133,
+      "cpu": 5.346461
+    },
+    {
+      "stage": "unchanged",
+      "trial": 1,
+      "period": "all",
+      "kind": "after",
+      "wall": 2.3824649159796536,
+      "cpu": 2.816286000000001
+    },
+    {
+      "stage": "unchanged",
+      "trial": 2,
+      "period": "today",
+      "kind": "base",
+      "wall": 1.8271987920161337,
+      "cpu": 2.825586
+    },
+    {
+      "stage": "unchanged",
+      "trial": 2,
+      "period": "today",
+      "kind": "after",
+      "wall": 1.5644625830464065,
+      "cpu": 1.7067989999999975
+    },
+    {
+      "stage": "unchanged",
+      "trial": 2,
+      "period": "all",
+      "kind": "base",
+      "wall": 3.7330245410557836,
+      "cpu": 5.5358170000000015
+    },
+    {
+      "stage": "unchanged",
+      "trial": 2,
+      "period": "all",
+      "kind": "after",
+      "wall": 2.397569291992113,
+      "cpu": 2.8628640000000027
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 0,
+      "period": "today",
+      "kind": "base",
+      "wall": 2.9298839999828488,
+      "cpu": 3.7286929999999945
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 0,
+      "period": "today",
+      "kind": "after",
+      "wall": 2.772017916897312,
+      "cpu": 2.749377
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 0,
+      "period": "all",
+      "kind": "base",
+      "wall": 5.541077666915953,
+      "cpu": 6.921016000000001
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 0,
+      "period": "all",
+      "kind": "after",
+      "wall": 3.6908368330914527,
+      "cpu": 3.982910000000004
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 1,
+      "period": "today",
+      "kind": "base",
+      "wall": 2.827241291059181,
+      "cpu": 3.915410999999999
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 1,
+      "period": "today",
+      "kind": "after",
+      "wall": 2.948758542072028,
+      "cpu": 2.981068999999996
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 1,
+      "period": "all",
+      "kind": "base",
+      "wall": 4.401502541033551,
+      "cpu": 6.368053
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 1,
+      "period": "all",
+      "kind": "after",
+      "wall": 4.920624000020325,
+      "cpu": 4.521177999999994
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 2,
+      "period": "today",
+      "kind": "base",
+      "wall": 3.412802667124197,
+      "cpu": 4.295843999999995
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 2,
+      "period": "today",
+      "kind": "after",
+      "wall": 2.743525750003755,
+      "cpu": 2.7834910000000157
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 2,
+      "period": "all",
+      "kind": "base",
+      "wall": 4.594231583178043,
+      "cpu": 6.7233649999999905
+    },
+    {
+      "stage": "one-changed-file",
+      "trial": 2,
+      "period": "all",
+      "kind": "after",
+      "wall": 3.774383791955188,
+      "cpu": 3.9168699999999976
+    }
+  ],
+  "tenMinuteCliWindows": {
+    "base": [
+      {
+        "offset": 0,
+        "period": "today",
+        "wall": 2.97376904101111,
+        "cpu": 3.513818,
+        "exit": 0
+      },
+      {
+        "offset": 0,
+        "period": "all",
+        "wall": 9.228777166921645,
+        "cpu": 10.503618,
+        "exit": 0
+      },
+      {
+        "offset": 30,
+        "period": "today",
+        "wall": 13.098430417012423,
+        "cpu": 8.217088,
+        "exit": 0
+      },
+      {
+        "offset": 30,
+        "period": "all",
+        "wall": 9.941826666938141,
+        "cpu": 12.871690000000003,
+        "exit": 0
+      },
+      {
+        "offset": 60,
+        "period": "today",
+        "wall": 15.666484375018626,
+        "cpu": 7.760694000000003,
+        "exit": 0
+      },
+      {
+        "offset": 60,
+        "period": "all",
+        "wall": 8.060354958986863,
+        "cpu": 10.541977999999991,
+        "exit": 0
+      },
+      {
+        "offset": 90,
+        "period": "today",
+        "wall": 3.194974583107978,
+        "cpu": 5.135183000000003,
+        "exit": 0
+      },
+      {
+        "offset": 90,
+        "period": "all",
+        "wall": 7.067711082985625,
+        "cpu": 10.430394999999999,
+        "exit": 0
+      },
+      {
+        "offset": 120,
+        "period": "today",
+        "wall": 7.3775305829476565,
+        "cpu": 8.531520999999994,
+        "exit": 0
+      },
+      {
+        "offset": 120,
+        "period": "all",
+        "wall": 9.479501415975392,
+        "cpu": 11.951751000000003,
+        "exit": 0
+      },
+      {
+        "offset": 150,
+        "period": "today",
+        "wall": 3.5643890840001404,
+        "cpu": 3.8388219999999897,
+        "exit": 0
+      },
+      {
+        "offset": 150,
+        "period": "all",
+        "wall": 5.4109761249274015,
+        "cpu": 7.639789000000004,
+        "exit": 0
+      },
+      {
+        "offset": 180,
+        "period": "today",
+        "wall": 5.554012208012864,
+        "cpu": 7.707392999999993,
+        "exit": 0
+      },
+      {
+        "offset": 180,
+        "period": "all",
+        "wall": 13.967338749906048,
+        "cpu": 16.781228,
+        "exit": 0
+      },
+      {
+        "offset": 210,
+        "period": "today",
+        "wall": 4.456054958049208,
+        "cpu": 6.520707000000002,
+        "exit": 0
+      },
+      {
+        "offset": 210,
+        "period": "all",
+        "wall": 6.11438904190436,
+        "cpu": 9.121701999999988,
+        "exit": 0
+      },
+      {
+        "offset": 240,
+        "period": "today",
+        "wall": 2.920941417105496,
+        "cpu": 4.2351319999999895,
+        "exit": 0
+      },
+      {
+        "offset": 240,
+        "period": "all",
+        "wall": 3.861439957981929,
+        "cpu": 5.903698000000009,
+        "exit": 0
+      },
+      {
+        "offset": 270,
+        "period": "today",
+        "wall": 11.487445584032685,
+        "cpu": 6.410196000000024,
+        "exit": 0
+      },
+      {
+        "offset": 270,
+        "period": "all",
+        "wall": 6.768143041990697,
+        "cpu": 8.207519999999995,
+        "exit": 0
+      },
+      {
+        "offset": 300,
+        "period": "today",
+        "wall": 4.1418634171132,
+        "cpu": 4.411017999999981,
+        "exit": 0
+      },
+      {
+        "offset": 300,
+        "period": "all",
+        "wall": 8.8621128750965,
+        "cpu": 8.035143000000005,
+        "exit": 0
+      },
+      {
+        "offset": 330,
+        "period": "today",
+        "wall": 4.096720458008349,
+        "cpu": 4.732036000000015,
+        "exit": 0
+      },
+      {
+        "offset": 330,
+        "period": "all",
+        "wall": 9.992794791935012,
+        "cpu": 9.933508999999994,
+        "exit": 0
+      },
+      {
+        "offset": 360,
+        "period": "today",
+        "wall": 2.76722945808433,
+        "cpu": 3.3912209999999803,
+        "exit": 0
+      },
+      {
+        "offset": 360,
+        "period": "all",
+        "wall": 5.8642002500128,
+        "cpu": 7.326983000000034,
+        "exit": 0
+      },
+      {
+        "offset": 390,
+        "period": "today",
+        "wall": 2.6778020411729813,
+        "cpu": 3.7620979999999946,
+        "exit": 0
+      },
+      {
+        "offset": 390,
+        "period": "all",
+        "wall": 5.050794540904462,
+        "cpu": 7.133548999999988,
+        "exit": 0
+      },
+      {
+        "offset": 420,
+        "period": "today",
+        "wall": 3.6901842090301216,
+        "cpu": 4.189849000000002,
+        "exit": 0
+      },
+      {
+        "offset": 420,
+        "period": "all",
+        "wall": 6.032069834182039,
+        "cpu": 8.007740000000005,
+        "exit": 0
+      },
+      {
+        "offset": 450,
+        "period": "today",
+        "wall": 2.9112843750044703,
+        "cpu": 3.9600229999999783,
+        "exit": 0
+      },
+      {
+        "offset": 450,
+        "period": "all",
+        "wall": 3.756850166944787,
+        "cpu": 5.710601000000018,
+        "exit": 0
+      },
+      {
+        "offset": 480,
+        "period": "today",
+        "wall": 2.6974036670289934,
+        "cpu": 4.001890999999972,
+        "exit": 0
+      },
+      {
+        "offset": 480,
+        "period": "all",
+        "wall": 5.369381666881964,
+        "cpu": 7.646058999999994,
+        "exit": 0
+      },
+      {
+        "offset": 510,
+        "period": "today",
+        "wall": 2.645977957872674,
+        "cpu": 3.9460610000000216,
+        "exit": 0
+      },
+      {
+        "offset": 510,
+        "period": "all",
+        "wall": 3.631756457965821,
+        "cpu": 5.587337000000005,
+        "exit": 0
+      },
+      {
+        "offset": 540,
+        "period": "today",
+        "wall": 2.600849417038262,
+        "cpu": 3.76173,
+        "exit": 0
+      },
+      {
+        "offset": 540,
+        "period": "all",
+        "wall": 4.519006457878277,
+        "cpu": 6.570712000000029,
+        "exit": 0
+      },
+      {
+        "offset": 570,
+        "period": "today",
+        "wall": 2.6988599998876452,
+        "cpu": 3.854294000000003,
+        "exit": 0
+      },
+      {
+        "offset": 570,
+        "period": "all",
+        "wall": 4.423286249861121,
+        "cpu": 6.358565000000006,
+        "exit": 0
+      }
+    ],
+    "after": [
+      {
+        "offset": 0,
+        "period": "today",
+        "wall": 2.9470984579529613,
+        "cpu": 3.111074,
+        "exit": 0
+      },
+      {
+        "offset": 0,
+        "period": "all",
+        "wall": 3.5594449159689248,
+        "cpu": 3.9675969999999996,
+        "exit": 0
+      },
+      {
+        "offset": 120,
+        "period": "today",
+        "wall": 3.105317249894142,
+        "cpu": 3.059262999999999,
+        "exit": 0
+      },
+      {
+        "offset": 240,
+        "period": "today",
+        "wall": 3.575752583099529,
+        "cpu": 3.3124829999999994,
+        "exit": 0
+      },
+      {
+        "offset": 360,
+        "period": "today",
+        "wall": 3.6493242918513715,
+        "cpu": 3.305621000000001,
+        "exit": 0
+      },
+      {
+        "offset": 480,
+        "period": "today",
+        "wall": 3.294178416952491,
+        "cpu": 3.304381,
+        "exit": 0
+      }
+    ],
+    "batch": [
+      {
+        "offset": 0,
+        "period": "today,all",
+        "wall": 4.876208708854392,
+        "cpu": 5.013427,
+        "exit": 0
+      },
+      {
+        "offset": 120,
+        "period": "today",
+        "wall": 4.230933916987851,
+        "cpu": 3.609948,
+        "exit": 0
+      },
+      {
+        "offset": 240,
+        "period": "today",
+        "wall": 3.6313694168347865,
+        "cpu": 3.294892,
+        "exit": 0
+      },
+      {
+        "offset": 360,
+        "period": "today",
+        "wall": 2.892139333067462,
+        "cpu": 2.870813999999999,
+        "exit": 0
+      },
+      {
+        "offset": 480,
+        "period": "today",
+        "wall": 2.4762525409460068,
+        "cpu": 2.5544000000000007,
+        "exit": 0
+      }
+    ]
+  },
+  "liveComparison": [
+    {
+      "period": "today",
+      "attempt": 3,
+      "stableCorpus": false,
+      "equal": true,
+      "clock": "1793336555073"
+    },
+    {
+      "period": "week",
+      "attempt": 3,
+      "stableCorpus": true,
+      "equal": true,
+      "clock": "1793336574426"
+    },
+    {
+      "period": "30days",
+      "attempt": 1,
+      "stableCorpus": true,
+      "equal": true,
+      "clock": "1793336580901"
+    },
+    {
+      "period": "all",
+      "attempt": 3,
+      "stableCorpus": false,
+      "equal": true,
+      "clock": "1793336604733"
+    }
+  ],
+  "finalBatchFrozenEquality": {
+    "today": {
+      "equal": true,
+      "canonicalPayloadSha256": "100f6cbe63cb28b3d1a4d508be948562c416b43fb1f4ded87bae17835fca17fa"
+    },
+    "week": {
+      "equal": true,
+      "canonicalPayloadSha256": "0ca04e8b874d5c0e112eec8f5b32c4e9a6ab8d0df75b7a8df8e2142132c2fa7a"
+    },
+    "30days": {
+      "equal": true,
+      "canonicalPayloadSha256": "20427ba889964756eea3b1690a182eec34dcc564434db4f9396d800d3453cc66"
+    },
+    "all": {
+      "equal": true,
+      "canonicalPayloadSha256": "359804bc453e24518db1d17d6ac3c7696e9a5b2263d3b561d9594418685d2256"
+    }
+  },
+  "headlineSumWallMs": {
+    "base": {
+      "today": 0.12429199999996854,
+      "week": 0.28312499999992724,
+      "30days": 0.32508299999972223,
+      "all": 0.6757080000006681
+    },
+    "candidateBatch": {
+      "today": 0.1432079999999587,
+      "week": 0.22295800000028976,
+      "30days": 0.15483399999993708,
+      "all": 0.5437500000007276
+    }
+  },
+  "finalDiagnosticBuildEquality": {
+    "today": true,
+    "week": true,
+    "30days": true,
+    "all": true
+  }
+}

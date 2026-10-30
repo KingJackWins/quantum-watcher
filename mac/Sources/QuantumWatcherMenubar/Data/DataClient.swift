@@ -79,6 +79,46 @@ struct DataClient {
         }
     }
 
+    /// Due periods share the validated session snapshot inside one CLI. The
+    /// normal per-period payload schema is unchanged inside this envelope.
+    static func fetchPeriods(_ periods: [Period]) async throws -> [Period: MenubarPayload] {
+        if periods.count == 1, let period = periods.first {
+            return [period: try await fetch(period: period, provider: .all, includeOptimize: false)]
+        }
+        let ordered = periods.sorted { a, b in
+            if a == .today { return b != .today }
+            if b == .today { return false }
+            return a.cliArg < b.cliArg
+        }
+        let result = try await runCLI(subcommand: ["status", "--format", "menubar-json", "--provider", "all",
+                                                  "--periods", ordered.map(\.cliArg).joined(separator: ","), "--no-optimize"])
+        if result.exitCode != 0 {
+            // Allow app/CLI updates in either order. A genuinely failed batch
+            // is not retried; only an older CLI's unknown-option response is.
+            if result.stderr.contains("unknown option '--periods") {
+                var fallback: [Period: MenubarPayload] = [:]
+                for period in ordered {
+                    fallback[period] = try await fetch(period: period, provider: .all, includeOptimize: false)
+                }
+                return fallback
+            }
+            throw DataClientError.nonZeroExit(code: result.exitCode, stderr: result.stderr)
+        }
+        struct Batch: Decodable { let payloads: [String: MenubarPayload] }
+        do {
+            let batch = try JSONDecoder().decode(Batch.self, from: result.stdout)
+            var payloads: [Period: MenubarPayload] = [:]
+            for period in ordered {
+                guard let payload = batch.payloads[period.cliArg] else {
+                    throw NSError(domain: "QuantumWatcherBatch", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "Missing period in CLI response: \(period.cliArg)"])
+                }
+                payloads[period] = payload
+            }
+            return payloads
+        } catch { throw DataClientError.decode(error) }
+    }
+
     struct ProcessResult {
         let stdout: Data
         let stderr: String

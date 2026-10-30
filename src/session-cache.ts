@@ -78,7 +78,8 @@ export type CachedFile = {
   failed?: boolean
   // Claude only. Claude entries are stored BEFORE cross-file dedup (a pure
   // function of the transcript); `replayClaudeDedup` in parser.ts applies the
-  // dedup fresh every run. Each marker places an assistant entry that is not a
+  // dedup in discovery order (or reuses an identical-corpus replay plan). Each
+  // marker places an assistant entry that is not a
   // plain call: [turn index, position before that call index, message id or
   // null, kind] with kind 1 = its call parsing threw (base then recorded the
   // whole file as failed after marking the ids seen so far) and kind 0 = an id
@@ -291,18 +292,41 @@ function validateCache(raw: unknown): raw is SessionCache {
   return Object.values(o['providers'] as Record<string, unknown>).every(validateProviderSection)
 }
 
+// A single CLI invocation can ask for today and then a longer range. Reuse
+// the validated snapshot while its on-disk identity is unchanged. This is not
+// a TTL: replacement, deletion, or a same-size rewrite invalidates it.
+// Only the sequential, one-shot menubar-json CLI action opts in. Long-lived
+// servers and concurrent parser clients keep independent mutable snapshots.
+let reuseLoadedSnapshot = false
+export function enableSessionSnapshotReuse(enabled = true): void {
+  reuseLoadedSnapshot = enabled
+  loadedSnapshot = undefined
+}
+let loadedSnapshot: { path: string; fingerprint: string; cache: SessionCache } | undefined
+export function clearLoadedSessionCache(): void { loadedSnapshot = undefined }
+async function snapshotFingerprint(path: string): Promise<string> {
+  const s = await stat(path)
+  return [s.dev, s.ino, s.size, s.mtimeMs, s.ctimeMs].join(':')
+}
+
 export async function loadCache(): Promise<SessionCache> {
+  const path = getCachePath()
   try {
-    const raw = await readFile(getCachePath(), 'utf-8')
-    const parsed = JSON.parse(raw)
+    const before = await snapshotFingerprint(path)
+    if (reuseLoadedSnapshot && loadedSnapshot?.path === path && loadedSnapshot.fingerprint === before) return loadedSnapshot.cache
+    loadedSnapshot = undefined
+    const parsed = JSON.parse(await readFile(path, 'utf-8'))
     if (!validateCache(parsed)) return emptyCache()
+    if (reuseLoadedSnapshot && await snapshotFingerprint(path) === before) loadedSnapshot = { path, fingerprint: before, cache: parsed }
     return parsed
   } catch {
+    loadedSnapshot = undefined
     return emptyCache()
   }
 }
 
 export async function saveCache(cache: SessionCache): Promise<void> {
+  loadedSnapshot = undefined
   const dir = getCacheDir()
   if (!existsSync(dir)) await mkdir(dir, { recursive: true })
 
@@ -319,8 +343,14 @@ export async function saveCache(cache: SessionCache): Promise<void> {
     await handle.close()
   }
 
+  const fingerprint = await snapshotFingerprint(tempPath)
   try {
     await rename(tempPath, finalPath)
+    const after = await snapshotFingerprint(finalPath)
+    // rename may update ctime. Only adopt the final fingerprint if it is
+    // still our inode/size/mtime, never a competing writer's replacement.
+    loadedSnapshot = reuseLoadedSnapshot && validateCache(cache) && after.split(':').slice(0, 4).join(':') === fingerprint.split(':').slice(0, 4).join(':')
+      ? { path: finalPath, fingerprint: after, cache } : undefined
   } catch (err) {
     try { await unlink(tempPath) } catch {}
     throw err

@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 import Observation
 
-private let refreshIntervalSeconds: UInt64 = 30
+private let refreshIntervalSeconds = UInt64(PayloadRefreshCadence.todaySeconds)
 private let forceRefreshWatchdogSeconds: TimeInterval = 90
-private let refreshLoopWatchdogSeconds: TimeInterval = 90
+private let refreshLoopWatchdogSeconds: TimeInterval = 360
 private let statusPayloadRefreshWatchdogSeconds: TimeInterval = 60
 private let refreshRateLimitSeconds: TimeInterval = 5
 private let interactiveQuotaRefreshFloorSeconds: TimeInterval = 30
@@ -306,7 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func forceRefresh(bypassRateLimit: Bool = false, forceQuota: Bool = false) {
+    private func forceRefresh(bypassRateLimit: Bool = false, forceQuota: Bool = false, forcePayload: Bool = true) {
         let now = Date()
         _ = clearStaleForceRefreshIfNeeded(now: now)
         if forceRefreshTask != nil {
@@ -322,7 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let generation = forceRefreshGeneration
 
         forceRefreshTask = Task {
-            async let main: Void = refreshUsagePayloads(force: true, showLoading: true)
+            async let main: Void = refreshUsagePayloads(force: forcePayload, showLoading: forcePayload)
             async let quotas: Bool = refreshLiveQuotaProgressIfDue(force: forceQuota)
             _ = await main
             refreshStatusButton()
@@ -337,18 +337,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func refreshUsagePayloads(force: Bool, showLoading: Bool = false) async {
-        let menubarPeriod = store.menubarPeriod
-        let needsMenubarPayload = store.selectedPeriod != menubarPeriod || store.selectedProvider != .all
-        let needsTodayPayload = (store.selectedPeriod != .today || store.selectedProvider != .all) && menubarPeriod != .today
-
-        async let visible: Void = store.refresh(includeOptimize: false, force: force, showLoading: showLoading)
-        async let menubar: Void = needsMenubarPayload
-            ? store.refreshQuietly(period: menubarPeriod, force: force)
-            : ()
-        async let today: Void = needsTodayPayload
-            ? store.refreshQuietly(period: .today, force: force)
-            : ()
-        _ = await (visible, menubar, today)
+        var periods: Set<Period> = [store.menubarPeriod, .today]
+        if !store.isDayMode { periods.insert(store.selectedPeriod) }
+        await store.refreshPeriods(periods, force: force, showLoading: showLoading)
+        if store.selectedProvider != .all || store.isDayMode {
+            await store.refresh(includeOptimize: false,
+                                force: PayloadRefreshCadence.forceOnTick(period: store.selectedPeriod,
+                                                                        isDaySelection: store.isDayMode,
+                                                                        explicit: force),
+                                showLoading: showLoading)
+        }
     }
 
     /// Loads the currency code persisted by `quantum-watcher currency` so a relaunch picks up where
@@ -484,13 +482,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let clearedStaleLoading = store.clearStaleLoadingIfNeeded()
         let statusPayloadStale = store.needsStatusPayloadRefresh
         let sinceLast = Date().timeIntervalSince(lastRefreshTime)
-        let shouldForceRefresh = forcePayload ||
+        let shouldForceRefresh = reason == "timer" || forcePayload ||
             clearedStaleForceRefresh ||
             clearedStaleLoading ||
             sinceLast >= TimeInterval(refreshIntervalSeconds)
 
         if shouldForceRefresh {
-            forceRefresh(bypassRateLimit: true, forceQuota: forceQuota)
+            forceRefresh(bypassRateLimit: true, forceQuota: forceQuota, forcePayload: forcePayload)
         }
 
         let forceRefreshWasBlocked = hadForceRefreshInFlight && forceRefreshTask != nil

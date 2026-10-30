@@ -13,7 +13,7 @@ private func menubarPayload(cost: Double) -> MenubarPayload {
             oneShotRate: nil,
             inputTokens: 1,
             outputTokens: 1,
-            cacheHitPercent: 0,
+            cacheHitPercent: 0, codexCredits: nil,
             topActivities: [],
             topModels: [],
             localModelSavings: LocalModelSavings(totalUSD: 0, calls: 0, byModel: [], byProvider: []),
@@ -136,6 +136,37 @@ struct AppStoreRefreshRecoveryTests {
 
         #expect(willFetch)
         #expect(!store.isInFlightForTesting(period: .today, provider: .all))
+    }
+
+    @Test("due periods share a batch; fresh long periods stay out of later ticks")
+    func batchCadence() async {
+        let store = AppStore()
+        var requests: [Set<Period>] = []
+        let fetch: ([Period]) async throws -> [Period: MenubarPayload] = { periods in
+            requests.append(Set(periods))
+            return Dictionary(uniqueKeysWithValues: periods.map { ($0, menubarPayload(cost: $0 == .today ? 1 : 20)) })
+        }
+        await store.refreshPeriods([.today, .all], force: false, showLoading: true, fetch: fetch)
+        #expect(requests == [[.today, .all]])
+        #expect(store.todayPayload?.current.cost == 1)
+        store.selectedPeriod = .all
+        #expect(store.periodAllPayload?.current.cost == 20)
+        #expect(!store.isLoading)
+        await store.refreshPeriods([.today, .all], force: false, showLoading: false, fetch: fetch)
+        #expect(requests == [[.today, .all], [.today]])
+        await store.refreshPeriods([.today, .all], force: true, showLoading: true, fetch: fetch)
+        #expect(requests.last == [.today, .all])
+    }
+
+    @Test("batch results cannot repopulate a reset refresh generation")
+    func batchReset() async {
+        let store = AppStore()
+        await store.refreshPeriods([.today, .all], force: true, showLoading: true) { periods in
+            store.resetRefreshState(clearCache: true)
+            return Dictionary(uniqueKeysWithValues: periods.map { ($0, menubarPayload(cost: 1)) })
+        }
+        #expect(store.todayPayload == nil)
+        #expect(!store.isLoading)
     }
 
 }

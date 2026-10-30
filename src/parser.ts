@@ -1,3 +1,5 @@
+import { measure } from './performance.js'
+import { dedupClaudeFiles } from './claude-dedup-cache.js'
 import { lstat, readFile, readdir, stat } from 'fs/promises'
 import { basename, dirname, join, resolve, sep } from 'path'
 import { readSessionLines } from './fs-utils.js'
@@ -16,6 +18,7 @@ import {
   type ProviderSection,
   type SessionCache,
   cleanupOrphanedTempFiles,
+  clearLoadedSessionCache,
   computeEnvFingerprint,
   DURABLE_PROVIDER_NAMES,
   fingerprintFile,
@@ -1218,8 +1221,8 @@ export function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>)
 // That made a file's cache entry depend on which files were scanned before it
 // (i.e. on the CLAUDE_CONFIG_DIR selection). Here the per-file part is cached
 // (`groupIntoClaudeSegments`: no shared state) and the shared-state part
-// (`replayClaudeDedup`) runs fresh on every run, over the files the current
-// selection discovered, in discovery order. Composition is exactly
+// (`replayClaudeDedup`) runs over the files the current selection discovered,
+// in discovery order; a disposable plan can reuse an identical replay. Composition is exactly
 // `groupIntoTurns` (tests/claude-cache-selection.test.ts proves it differentially):
 //  - a segment starts at every user entry with non-blank text (or at the start
 //    of the file) and owns the assistant entries up to the next one;
@@ -1614,10 +1617,10 @@ export async function readAgentType(filePath: string): Promise<string | undefine
 
 async function scanProjectDirs(
   dirs: Array<{ path: string; name: string }>,
-  seenMsgIds: Set<string>,
   diskCache: SessionCache,
   dateRange?: DateRange,
 ): Promise<ProjectSummary[]> {
+  const walkDone = measure('claude.walk-stat')
   const section = getOrCreateProviderSection(diskCache, 'claude')
   const allDiscoveredFiles = new Set<string>()
 
@@ -1653,6 +1656,8 @@ async function scanProjectDirs(
     }
   }
 
+  walkDone({ hits: discoveredFiles.length - changedFiles.size, misses: changedFiles.size })
+  const parseDone = measure('claude.parse-evict')
   // Entries this run parsed that would not survive a save + load (a value the
   // cache validator rejects, e.g. a call with `usage.speed: "invalid"`, or a
   // non-string session id). Base kept such values only when they were not
@@ -1725,35 +1730,36 @@ async function scanProjectDirs(
     }
   }
 
+  parseDone()
   const projectMap = new Map<string, { project: string; projectPath: string; sessions: SessionSummary[]; dirNames: Set<string> }>()
 
-  // Cross-file dedup, fresh every run: base's rule, base cold's order. Base did
+  // Cross-file dedup: base's rule and cold order. Reuse a replay plan only
+  // for the identical ordered corpus; any change replays it all. Base did
   // all of its dedup while parsing, once per occurrence, before aggregating, and
   // a path's last parse overwrote its entry; so replay every occurrence first,
   // keeping the last result per path, then aggregate every occurrence with it.
-  const replayed = new Map<string, CachedTurn[] | null>()
-  for (const { filePath } of discoveredFiles) {
-    const cachedFile = volatileEntries.get(filePath) ?? section.files[filePath]
-    replayed.set(filePath, cachedFile ? replayClaudeDedup(cachedFile, seenMsgIds) : null)
-  }
+  const dedupDone = measure('claude.dedup')
+  const replayed = await dedupClaudeFiles(discoveredFiles.map(({ filePath }) => ({
+    path: filePath, file: volatileEntries.get(filePath) ?? section.files[filePath],
+  })), replayClaudeDedup, volatileEntries.size === 0)
 
+  dedupDone()
+  const classifyDone = measure('claude.classify-aggregate')
   for (const { filePath, dirName } of discoveredFiles) {
     const cachedFile = volatileEntries.get(filePath) ?? section.files[filePath]
     if (!cachedFile) continue
     const turns = replayed.get(filePath)
     if (!turns || turns.length === 0) continue
 
-    let classifiedTurns = turns.map(cachedTurnToClassified)
-
-    if (dateRange) {
-      classifiedTurns = classifiedTurns.filter(turn => {
-        if (turn.assistantCalls.length === 0) return false
-        const firstCallTs = turn.assistantCalls[0]!.timestamp
-        if (!firstCallTs) return false
-        const ts = new Date(firstCallTs)
-        return ts >= dateRange.start && ts <= dateRange.end
-      })
-    }
+    // Dedup still sees all history first. Classification/pricing only needs
+    // turns in this query; filtering uses the identical first-call timestamp.
+    const selectedTurns = dateRange ? turns.filter(turn => {
+      const firstCallTs = turn.calls[0]?.timestamp
+      if (!firstCallTs) return false
+      const ts = new Date(firstCallTs)
+      return ts >= dateRange.start && ts <= dateRange.end
+    }) : turns
+    const classifiedTurns = selectedTurns.map(cachedTurnToClassified)
 
     if (classifiedTurns.length === 0) continue
 
@@ -1782,6 +1788,7 @@ async function scanProjectDirs(
     }
   }
 
+  classifyDone()
   // Fold slug-keyed entries into cwd-keyed entries
   const cwdKeyByDirName = new Map<string, string>()
   for (const [key, entry] of projectMap) {
@@ -2388,6 +2395,7 @@ function cacheKey(dateRange?: DateRange, providerFilter?: string): string {
 
 export function clearSessionCache(): void {
   sessionCache.clear()
+  clearLoadedSessionCache()
 }
 
 function cachePut(key: string, data: ProjectSummary[]) {
@@ -2484,18 +2492,21 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
   const cached = sessionCache.get(key)
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data
 
+  const loadDone = measure('cache.load')
   const diskCache = await loadCache()
+  loadDone()
   await cleanupOrphanedTempFiles()
 
-  const seenMsgIds = new Set<string>()
   const seenKeys = new Set<string>()
+  const discoverDone = measure('providers.discovery')
   const allSources = await discoverAllSessions(providerFilter)
+  discoverDone()
 
   const claudeSources = allSources.filter(s => s.provider === 'claude')
   const nonClaudeSources = allSources.filter(s => s.provider !== 'claude')
 
   const claudeDirs = claudeSources.map(s => ({ path: s.path, name: s.project }))
-  const claudeProjects = await scanProjectDirs(claudeDirs, seenMsgIds, diskCache, dateRange)
+  const claudeProjects = await scanProjectDirs(claudeDirs, diskCache, dateRange)
 
   const providerGroups = new Map<string, SessionSource[]>()
   for (const source of nonClaudeSources) {
@@ -2504,6 +2515,7 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
     providerGroups.set(source.provider, existing)
   }
 
+  const othersDone = measure('providers.parse')
   const otherProjects: ProjectSummary[] = []
   for (const [providerName, sources] of providerGroups) {
     const projects = await parseProviderSources(providerName, sources, seenKeys, diskCache, dateRange)
@@ -2530,10 +2542,13 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
     otherProjects.push(...projects)
   }
 
+  othersDone()
+  const saveDone = measure('cache.save')
   if ((diskCache as { _dirty?: boolean })._dirty) {
     try { await saveCache(diskCache) } catch {}
   }
 
+  saveDone()
   // Merge across providers by normalised project path so the same repository
   // is not double-counted when it was worked on with more than one tool
   // (e.g. both Claude Code and Codex). Two sub-problems:

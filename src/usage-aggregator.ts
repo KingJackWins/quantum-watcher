@@ -1,3 +1,4 @@
+import { measure } from './performance.js'
 import { homedir } from 'node:os'
 import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange } from './types.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type BreakdownCoverage, type HistoryIncomplete, type HistoryIncompleteInfo, type MenubarPayload, buildMenubarPayload } from './menubar-json.js'
@@ -308,7 +309,9 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   /// mergeHistoryDays; every earlier day comes from the daily cache.
   let liveDays: DailyEntry[]
 
+  const historyDone = measure('history.load-hydrate')
   const history = await resolveHistory(yesterdayStr)
+  historyDone()
   cache = history.cache
 
   if (isAllProviders) {
@@ -342,6 +345,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   // WHOLE total comes from the transcript parse, history.daily carries those
   // same parsed days for the period, and `historyIncomplete` says so.
   // A project filter keeps the transcript totals (the history has no projects).
+  const dailyDone = measure('history.daily-sum')
   const hasProjectFilter = (opts.project?.length ?? 0) > 0 || (opts.exclude?.length ?? 0) > 0
   const inScope = (date: string) =>
     date >= rangeStartStr && date <= rangeEndStr && (!daysSelection || daysSelection.days.has(date))
@@ -368,6 +372,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   const parsedData = buildPeriodData(periodInfo.label, scanProjects)
   const parsedCost = parsedData.cost
   const parsedSessions = parsedData.sessions
+  const headlineDone = measure('history.headline-sum')
   if (!hasProjectFilter && isAllProviders) {
     currentData = buildPeriodDataFromDays(periodDays, periodInfo.label)
     // Sessions are a count, not spend: the parse counts every session active in
@@ -384,6 +389,8 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       currentData.savingsUSD = totals.savingsUSD
     }
   }
+  headlineDone()
+  dailyDone()
   // Cost per session divides two numbers of the same coverage, never a
   // history-wide cost by a transcript-only session count:
   // - all providers (no project filter): saved-days cost / saved-days sessions

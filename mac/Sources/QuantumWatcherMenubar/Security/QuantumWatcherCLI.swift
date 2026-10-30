@@ -95,8 +95,27 @@ enum QuantumWatcherCLI {
         // `env --` treats everything following as argv, not VAR=val pairs -- guards against an
         // argument accidentally resembling an env assignment.
         return Command(executable: "/usr/bin/env",
-                       arguments: ["--"] + baseArgv() + subcommand,
+                       arguments: ["--"] + backgroundArgv(baseArgv()) + subcommand,
                        environment: environment)
+    }
+
+    /// This workload decodes a large JSON snapshot then exits. Parallel V8 GC
+    /// burns a second core for little latency benefit. Keep GC on the CLI's
+    /// thread; this does not change heap limits or the parser/cache semantics.
+    /// Only known Node launches are rewritten. Custom binaries/wrappers retain
+    /// their argv. Resolve the npm symlink to identify the installed JS entry.
+    static func backgroundArgv(_ argv: [String]) -> [String] {
+        guard let first = argv.first else { return argv }
+        if URL(fileURLWithPath: first).lastPathComponent == "node" {
+            return [first, "--single-threaded-gc"] + argv.dropFirst()
+        }
+        if argv.count == 1, first.hasPrefix("/") {
+            let entry = URL(fileURLWithPath: first).resolvingSymlinksInPath()
+            if entry.pathExtension == "js" {
+                return ["node", "--single-threaded-gc", first]
+            }
+        }
+        return argv
     }
 
     /// Builds a `Process` that runs the CLI with the given subcommand args, for the

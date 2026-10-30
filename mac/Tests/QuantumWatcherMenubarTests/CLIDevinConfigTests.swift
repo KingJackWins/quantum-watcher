@@ -4,14 +4,14 @@ import Testing
 
 @Suite("CLI Devin config", .serialized)
 struct CLIDevinConfigTests {
-    private func withTemporaryStore(_ body: (URL, CodeburnCLIConfigStore) throws -> Void) throws {
+    private func withTemporaryStore(_ body: (URL, QuantumWatcherCLIConfigStore) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("quantum-watcher-devin-config-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer {
             try? FileManager.default.removeItem(at: root)
         }
-        try body(root, CodeburnCLIConfigStore(homeDirectory: root.path))
+        try body(root, QuantumWatcherCLIConfigStore(homeDirectory: root.path))
     }
 
     private func configURL(in home: URL) -> URL {
